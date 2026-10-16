@@ -40,6 +40,33 @@ public sealed class JobStore
         for (var i = 0; i < states.Length; i++) cmd.Parameters.AddWithValue(names[i], states[i]);
         using var r = cmd.ExecuteReader(); var result = new List<StoredJob>(); while (r.Read()) result.Add(ReadJob(r)); return result;
     }
+    public IReadOnlyList<StoredJob> Recent(int maximum)
+    {
+        using var c = Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT * FROM jobs ORDER BY updated_at DESC LIMIT $maximum";
+        cmd.Parameters.AddWithValue("$maximum", maximum);
+        using var r = cmd.ExecuteReader();
+        var result = new List<StoredJob>();
+        while (r.Read())
+        {
+            result.Add(ReadJob(r));
+        }
+        return result;
+    }
+    public IReadOnlyList<(string State, int Count)> StateCounts()
+    {
+        using var c = Open();
+        using var cmd = c.CreateCommand();
+        cmd.CommandText = "SELECT state, COUNT(*) FROM jobs GROUP BY state ORDER BY state";
+        using var r = cmd.ExecuteReader();
+        var result = new List<(string State, int Count)>();
+        while (r.Read())
+        {
+            result.Add((r.GetString(0), r.GetInt32(1)));
+        }
+        return result;
+    }
     public void Insert(StoredJob job)
     {
         using var c = Open(); using var cmd = c.CreateCommand();
