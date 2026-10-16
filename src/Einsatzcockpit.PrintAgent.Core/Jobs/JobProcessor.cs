@@ -90,6 +90,11 @@ public sealed class JobProcessor
                 return;
             }
             job = Change(job, JobStates.Spooled, spoolRef: result.SpoolRef); _store.Update(job);
+            if (job.CancelRequested)
+            {
+                await CancelSpooledAsync(job, cancellationToken);
+                return;
+            }
             await StatusAsync(job, "printing", "spooled", result.SpoolRef);
         }
         catch (Exception ex) when (_store.Get(grant.JobId) is { } current && JobStates.BeforeSubmitting(current.State))
@@ -123,11 +128,14 @@ public sealed class JobProcessor
     {
         var job = _store.Get(jobId); if (job is null) return;
         if (JobStates.BeforeSubmitting(job.State)) { _store.Update(Change(job, JobStates.Abandoned)); return; }
+        if (job.State == JobStates.Submitting)
+        {
+            _store.Update(job with { CancelRequested = true, UpdatedAt = _clock.UtcNow });
+            return;
+        }
         if (job.State == JobStates.Spooled)
         {
-            var route = JsonSerializer.Deserialize<RouteConfig>(job.RouteJson, ProtocolJson.Options)!;
-            await _spooler.CancelJobAsync(route.LocalQueue, job.SpoolRef!, cancellationToken);
-            var canceled = Change(job, JobStates.Abandoned); _store.Update(canceled); await StatusAsync(canceled, "canceled", "spooled", job.SpoolRef);
+            await CancelSpooledAsync(job, cancellationToken);
         }
     }
 
@@ -143,6 +151,14 @@ public sealed class JobProcessor
         var message = new JobStatusMessage(job.JobId, job.LeaseToken, status, phase, spoolRef, error);
         _store.AddOutbox("job_status", JsonSerializer.Serialize(message, ProtocolJson.Options), _clock.UtcNow);
         await _cloud.EnqueueStatusAsync(message);
+    }
+    private async Task CancelSpooledAsync(StoredJob job, CancellationToken cancellationToken)
+    {
+        var route = JsonSerializer.Deserialize<RouteConfig>(job.RouteJson, ProtocolJson.Options)!;
+        await _spooler.CancelJobAsync(route.LocalQueue, job.SpoolRef!, cancellationToken);
+        var canceled = Change(job, JobStates.Abandoned) with { CancelRequested = false };
+        _store.Update(canceled);
+        await StatusAsync(canceled, "canceled", "spooled", job.SpoolRef);
     }
     private StoredJob Change(StoredJob job, string state, string? pdfPath = null, string? spoolRef = null, string? error = null) =>
         job with { State = state, PdfPath = pdfPath ?? job.PdfPath, SpoolRef = spoolRef ?? job.SpoolRef, Error = error, UpdatedAt = _clock.UtcNow };

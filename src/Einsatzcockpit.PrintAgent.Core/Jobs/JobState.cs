@@ -18,7 +18,8 @@ public static class JobStates
 
 public sealed record StoredJob(string JobId, string LeaseToken, int Generation, string State, string DocumentType,
     string ArtifactUrl, string RenderKind, string? OptionsJson, string RouteJson, string? PdfPath, string? SpoolRef,
-    string DocumentName, int Attempts, string? Error, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt)
+    string DocumentName, int Attempts, string? Error, DateTimeOffset CreatedAt, DateTimeOffset UpdatedAt,
+    bool CancelRequested = false)
 {
     /// <summary>True, sobald der Job je den Zustand "submitting" erreicht hat (Attempts zaehlt die Uebergaben an den Druckweg).</summary>
     public bool SubmitAttempted => Attempts > 0;

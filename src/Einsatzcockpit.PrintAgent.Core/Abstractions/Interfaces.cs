@@ -8,6 +8,17 @@ public interface ICloudChannel
     Task<IntentResult> SendIntentAsync(string jobId, string token);
     Task EnqueueStatusAsync(JobStatusMessage status);
     Task RenewAsync(IReadOnlyList<LeaseReference> leases);
+    Task SendMessageAsync(string type, object payload, CancellationToken cancellationToken = default) => Task.CompletedTask;
+}
+
+public interface IReadinessProvider
+{
+    Task<IReadOnlyList<RouteReadiness>> GetReadinessAsync(IReadOnlyList<RouteConfig> routes, CancellationToken cancellationToken);
+}
+
+public interface IInventoryProvider
+{
+    Task<IReadOnlyList<QueueInfo>> GetInventoryAsync(CancellationToken cancellationToken);
 }
 
 public interface IArtifactFetcher
