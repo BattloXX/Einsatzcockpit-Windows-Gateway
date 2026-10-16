@@ -1,0 +1,9 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/Einsatzcockpit.PrintAgent.Core/Einsatzcockpit.PrintAgent.Core.csproj" />
+    <Project Path="src/Einsatzcockpit.PrintAgent/Einsatzcockpit.PrintAgent.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/Einsatzcockpit.PrintAgent.Tests/Einsatzcockpit.PrintAgent.Tests.csproj" />
+  </Folder>
+</Solution>
