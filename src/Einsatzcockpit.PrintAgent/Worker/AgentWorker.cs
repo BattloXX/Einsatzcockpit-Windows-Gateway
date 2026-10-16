@@ -1,4 +1,5 @@
 using System.Net;
+using System.Reflection;
 using Einsatzcockpit.PrintAgent.Configuration;
 using Einsatzcockpit.PrintAgent.Core.Abstractions;
 using Einsatzcockpit.PrintAgent.Core.Cloud;
@@ -109,8 +110,9 @@ public sealed class AgentWorker : BackgroundService
             _loggerFactory.CreateLogger<RecoveryService>());
         var readiness = new ReadinessProvider(options.EffectiveAllowedCommands);
         var inventory = new PrinterInventory();
-        var assembly = typeof(AgentWorker).Assembly.GetName();
-        var version = assembly.Version?.ToString() ?? "unbekannt";
+        // CalVer-Version wie im Release (z. B. 2026.10.16); die Cloud zeigt sie als Versions-Pill.
+        var version = typeof(AgentWorker).Assembly
+            .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unbekannt";
         var hostInfo = new HostInfo(Environment.MachineName, Environment.OSVersion.VersionString,
             Environment.MachineName);
         return new AgentRuntime(store, recovery, processor, cloud, readiness, inventory, version, hostInfo);
