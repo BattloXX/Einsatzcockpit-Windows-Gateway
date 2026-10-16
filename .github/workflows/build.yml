@@ -1,0 +1,58 @@
+name: Build
+
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+
+permissions:
+  contents: write
+
+jobs:
+  test-linux:
+    name: Tests (Linux, Core)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - run: dotnet build Einsatzcockpit.PrintAgent.slnx -c Release
+      - run: dotnet test tests/Einsatzcockpit.PrintAgent.Tests -c Release --no-build
+
+  windows:
+    name: Build + Tests (Windows) und Paket
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "10.0.x"
+      - name: Version bestimmen
+        id: version
+        shell: pwsh
+        run: |
+          if ($env:GITHUB_REF -like "refs/tags/v*") { $v = $env:GITHUB_REF_NAME.TrimStart("v") }
+          else { $v = "0.1.$env:GITHUB_RUN_NUMBER" }
+          "version=$v" >> $env:GITHUB_OUTPUT
+      - run: dotnet test tests/Einsatzcockpit.PrintAgent.Tests -c Release
+      - name: Publish (win-x64, self-contained, Single-File)
+        run: >
+          dotnet publish src/Einsatzcockpit.PrintAgent -c Release -r win-x64 --self-contained
+          -p:PublishSingleFile=true -p:Version=${{ steps.version.outputs.version }} -o publish
+      - name: Paket packen
+        shell: pwsh
+        run: |
+          Copy-Item installer/install.ps1 publish/
+          Copy-Item README.md publish/
+          Compress-Archive -Path publish/* -DestinationPath EinsatzcockpitPrintAgent-${{ steps.version.outputs.version }}-win-x64.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: EinsatzcockpitPrintAgent-win-x64
+          path: EinsatzcockpitPrintAgent-*.zip
+      - name: Release (nur bei Tag)
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: EinsatzcockpitPrintAgent-*.zip
