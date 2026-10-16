@@ -24,7 +24,8 @@ public sealed record LeaseGrant(string JobId, string LeaseToken, int LeaseGenera
     string DocumentType, string ArtifactUrl, string RenderKind, PrintOptions? Options, RouteConfig Route);
 public sealed record RouteConfig(long RouteId, long PrinterId, string LocalQueue, string RenderMode,
     JsonElement? Options = null, string? PrinterName = null, int? Priority = null);
-public sealed record PrintOptions(int? Copies = null, string? Duplex = null, bool? Color = null, string? Media = null);
+// Color kommt aus der Cloud als "color" oder "monochrome" (wie beim Linux-Gateway / CUPS).
+public sealed record PrintOptions(int? Copies = null, string? Duplex = null, string? Color = null, string? Media = null);
 public sealed record IntentResult(string JobId, bool Ok, string? Reason = null);
 public sealed record JobStatusMessage(string JobId, string LeaseToken, string Status, string Phase,
     string? SpoolRef = null, string? Error = null);
