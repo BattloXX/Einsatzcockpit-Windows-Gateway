@@ -89,6 +89,7 @@ public sealed class JobProcessor
                 await StatusAsync(job, "uncertain", "submitting", error: error);
                 return;
             }
+            job = _store.Get(job.JobId) ?? job;
             job = Change(job, JobStates.Spooled, spoolRef: result.SpoolRef); _store.Update(job);
             if (job.CancelRequested)
             {

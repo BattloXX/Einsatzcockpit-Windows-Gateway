@@ -46,7 +46,11 @@ public sealed class AgentRuntime : IAsyncDisposable
         if (cloud is CloudConnection connection)
         {
             connection.ConfigSyncReceived += ApplyConfigAsync;
-            connection.JobAvailable += _ => PollLeasesAsync(CancellationToken.None);
+            connection.JobAvailable += message =>
+            {
+                _ = PollLeasesAsync(CancellationToken.None);
+                return Task.CompletedTask;
+            };
             connection.CancelJob += message => _processor.CancelAsync(message.JobId);
             connection.Abandon += message => { _processor.Abandon(message.JobId, message.Reason); return Task.CompletedTask; };
             connection.Connected += SendHelloAsync;
