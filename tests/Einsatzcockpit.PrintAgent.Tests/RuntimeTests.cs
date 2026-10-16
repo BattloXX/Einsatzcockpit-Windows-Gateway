@@ -162,7 +162,7 @@ public sealed class RuntimeTests : IDisposable
     public void Dispose()
     {
         foreach (var path in new[] { _path, _path + "-rejected", _path + "-uncertain" })
-            foreach (var suffix in new[] { "", "-wal", "-shm" }) File.Delete(path + suffix);
+            TestFiles.DeleteDatabase(path);
     }
 
     private sealed record Sent(string Type, object Payload);

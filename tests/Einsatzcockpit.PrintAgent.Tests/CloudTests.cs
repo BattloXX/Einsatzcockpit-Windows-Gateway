@@ -53,10 +53,7 @@ public sealed class CloudTests : IDisposable
 
     public void Dispose()
     {
-        foreach (var suffix in new[] { "", "-wal", "-shm" })
-        {
-            File.Delete(_path + suffix);
-        }
+        TestFiles.DeleteDatabase(_path);
     }
 
     private sealed class FakeTransport : IWebSocketTransport

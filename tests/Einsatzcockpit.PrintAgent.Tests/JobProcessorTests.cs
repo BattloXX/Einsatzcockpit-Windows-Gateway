@@ -8,7 +8,7 @@ namespace Einsatzcockpit.PrintAgent.Tests;
 public sealed class JobProcessorTests : IDisposable
 {
     private readonly string _path = Path.Combine(Path.GetTempPath(), $"ecpg-{Guid.NewGuid()}.db");
-    public void Dispose() { foreach (var suffix in new[] { "", "-wal", "-shm" }) File.Delete(_path + suffix); }
+    public void Dispose() => TestFiles.DeleteDatabase(_path);
 
     [Fact]
     public async Task Submit_wird_nur_nach_erfolgreichem_intent_aufgerufen()
