@@ -70,7 +70,10 @@ Spezifikation (Protokoll, Lease, Zustandsmaschine, Migration):
    z. B. *Kommandofunk*: PC A mit Priorität 10, PC B mit Priorität 20 auf **dasselbe** Druckziel.
 5. Druckregeln und Druckdialoge verwenden das Druckziel wie jeden anderen Drucker.
 
-Update: neue Version entpacken und `install.ps1` ohne Parameter erneut ausführen.
+Updates werden standardmäßig automatisch geprüft (zwei Minuten nach Start, danach alle sechs
+Stunden). Ein angemeldeter Benutzer darf die lesbare `status.json` und `logs\` ansehen sowie
+`requests\update-request` für eine sofortige Prüfung anlegen; `token.bin` und `agent.db`
+bleiben ausschließlich für den Dienst zugänglich.
 Deinstallation: `install.ps1 -Uninstall`. Daten und Token bleiben dabei erhalten.
 
 Für Druckerfreigaben eines Druckservers kann der Dienst unter einem eigenen Konto laufen:
@@ -93,7 +96,10 @@ EinsatzcockpitPrintAgent.exe unpair                             Token löschen
   "log_level": "Information",
   "allowed_commands": ["C:\\Tools\\SumatraPDF.exe"],
   "edge_path": null,
-  "html_ready_timeout_s": 9
+  "html_ready_timeout_s": 9,
+  "auto_update": true,
+  "update_interval_h": 6,
+  "update_repo": "BattloXX/Einsatzcockpit-Windows-Gateway"
 }
 ```
 

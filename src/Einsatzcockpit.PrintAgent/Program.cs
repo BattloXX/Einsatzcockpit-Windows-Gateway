@@ -94,6 +94,12 @@ static async Task<int> PairAsync(string[] args, AgentPaths paths)
 
 static void PrintStatus(AgentPaths paths)
 {
+    var snapshot = new Einsatzcockpit.PrintAgent.Core.Status.StatusFile(paths.StatusPath).Read();
+    if (snapshot is not null)
+    {
+        Console.WriteLine($"Version: {snapshot.Version}");
+        Console.WriteLine("Verbunden: " + (snapshot.Connected ? "ja" : "nein"));
+    }
     var options = AgentOptions.Load(paths);
     Console.WriteLine("Datenverzeichnis: " + paths.DataDirectory);
     Console.WriteLine("Cloud-URL: " + (options.CloudUrl ?? "nicht konfiguriert"));

@@ -4,6 +4,8 @@ using Einsatzcockpit.PrintAgent.Core.Abstractions;
 using Einsatzcockpit.PrintAgent.Core.Cloud;
 using Einsatzcockpit.PrintAgent.Core.Jobs;
 using Einsatzcockpit.PrintAgent.Core.Protocol;
+using Einsatzcockpit.PrintAgent.Core.Status;
+using Einsatzcockpit.PrintAgent.Core.Update;
 
 namespace Einsatzcockpit.PrintAgent.Core.Runtime;
 
@@ -19,15 +21,23 @@ public sealed class AgentRuntime : IAsyncDisposable
     private readonly IClock _clock;
     private readonly string _version;
     private readonly HostInfo _hostInfo;
+    private readonly IStatusSink? _statusSink;
+    private readonly string? _cloudUrl;
+    private readonly IUpdateGate _updateGate;
     private readonly SemaphoreSlim _grants = new(2, 2);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _routes = new();
     private readonly List<Task> _tasks = [];
     private CancellationTokenSource? _lifetime;
     private ConfigSync? _config;
+    private IReadOnlyList<RouteReadiness> _readinessResults = [];
+    private readonly DateTimeOffset _startedAt;
+    private DateTimeOffset? _lastConnectedAt;
+    private string? _lastError;
 
     public AgentRuntime(JobStore store, RecoveryService recovery, JobProcessor processor,
         ICloudChannel cloud, IReadinessProvider readiness, IInventoryProvider inventory,
-        string version, HostInfo hostInfo, IClock? clock = null)
+        string version, HostInfo hostInfo, IClock? clock = null, IStatusSink? statusSink = null,
+        string? cloudUrl = null, IUpdateGate? updateGate = null)
     {
         _store = store;
         _recovery = recovery;
@@ -38,6 +48,10 @@ public sealed class AgentRuntime : IAsyncDisposable
         _version = version;
         _hostInfo = hostInfo;
         _clock = clock ?? new SystemClock();
+        _statusSink = statusSink;
+        _cloudUrl = cloudUrl;
+        _updateGate = updateGate ?? new NoUpdateGate();
+        _startedAt = _clock.UtcNow;
         var cached = _store.GetValue("config_cache");
         if (cached is not null)
         {
@@ -83,6 +97,8 @@ public sealed class AgentRuntime : IAsyncDisposable
         _tasks.Add(LoopAsync(SendReadinessAsync, () => Seconds(_config?.Intervals.ReadinessS, 30), _lifetime.Token));
         _tasks.Add(LoopAsync(SendInventoryAsync, () => TimeSpan.FromMinutes(10), _lifetime.Token));
         _tasks.Add(LoopAsync(_ => CleanupAsync(), () => TimeSpan.FromDays(1), _lifetime.Token));
+        _tasks.Add(LoopAsync(WriteStatusAsync, () => TimeSpan.FromSeconds(5), _lifetime.Token));
+        await WriteStatusAsync(_lifetime.Token);
     }
 
     public Task ApplyConfigAsync(ConfigSync config)
@@ -107,6 +123,11 @@ public sealed class AgentRuntime : IAsyncDisposable
 
     public async Task PollLeasesAsync(CancellationToken cancellationToken)
     {
+        if (_updateGate.IsUpdatePending)
+        {
+            return;
+        }
+
         var grants = await _cloud.RequestLeasesAsync(5);
         foreach (var grant in grants)
         {
@@ -141,6 +162,7 @@ public sealed class AgentRuntime : IAsyncDisposable
     {
         var routes = _config?.Routes ?? [];
         var readiness = await _readiness.GetReadinessAsync(routes, cancellationToken);
+        _readinessResults = readiness;
         await _cloud.SendMessageAsync("readiness", new ReadinessMessage(readiness), cancellationToken);
     }
 
@@ -162,13 +184,46 @@ public sealed class AgentRuntime : IAsyncDisposable
         return Task.CompletedTask;
     }
 
+    private Task WriteStatusAsync(CancellationToken cancellationToken)
+    {
+        if (_statusSink is null)
+        {
+            return Task.CompletedTask;
+        }
+
+        var connected = _cloud is CloudConnection connection && connection.IsConnected;
+        if (connected)
+        {
+            _lastConnectedAt = _clock.UtcNow;
+        }
+
+        var readiness = _readinessResults.ToDictionary(route => route.RouteId);
+        var routes = (_config?.Routes ?? []).Select(route =>
+        {
+            readiness.TryGetValue(route.RouteId, out var result);
+            return new RouteStatus(route.PrinterName, route.LocalQueue, route.RenderMode, route.Priority,
+                result?.Ready ?? false, result?.State ?? "unbekannt", result?.Detail);
+        }).ToArray();
+        var counts = _store.StateCounts().ToDictionary(item => item.State, item => item.Count);
+        var open = _store.GetByState(JobStates.Granted, JobStates.Fetching, JobStates.IntentPending,
+            JobStates.Submitting, JobStates.Spooled).Count;
+        var uncertain = _store.GetByState(JobStates.Uncertain).Count;
+        var snapshot = new AgentStatusSnapshot(_version, _startedAt, _clock.UtcNow, connected,
+            _lastConnectedAt, _cloudUrl, _config?.Name, routes, counts, open, uncertain, _lastError,
+            (_statusSink as StatusFile)?.UpdateStatus ?? new UpdateStatus());
+        return _statusSink.WriteAsync(snapshot, cancellationToken);
+    }
+
     private async Task LoopAsync(Func<CancellationToken, Task> action, Func<TimeSpan> interval, CancellationToken cancellationToken)
     {
         while (!cancellationToken.IsCancellationRequested)
         {
             try { await Task.Delay(interval(), cancellationToken); await action(cancellationToken); }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { return; }
-            catch { /* Der nächste Durchlauf versucht es erneut. */ }
+            catch (Exception ex)
+            {
+                _lastError = ex.Message;
+            }
         }
     }
 
@@ -185,6 +240,14 @@ public sealed class AgentRuntime : IAsyncDisposable
         if (_cloud is CloudConnection connection)
         {
             await connection.StopAsync();
+        }
+        try
+        {
+            await WriteStatusAsync(CancellationToken.None);
+        }
+        catch
+        {
+            // Beim Stoppen darf eine nicht schreibbare Statusdatei den Dienst nicht aufhalten.
         }
         _lifetime.Dispose();
         _lifetime = null;

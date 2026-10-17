@@ -15,6 +15,12 @@ public sealed class AgentPaths
         ConfigurationPath = Path.Combine(DataDirectory, "agent.json");
         TokenPath = Path.Combine(DataDirectory, "token.bin");
         DatabasePath = Path.Combine(DataDirectory, "agent.db");
+        StatusPath = Path.Combine(DataDirectory, "status.json");
+        RequestsDirectory = Path.Combine(DataDirectory, "requests");
+        UpdateRequestPath = Path.Combine(RequestsDirectory, "update-request");
+        UpdatesDirectory = Path.Combine(DataDirectory, "updates");
+        UpdatePendingPath = Path.Combine(DataDirectory, "update-pending");
+        UpdateFailedPath = Path.Combine(DataDirectory, "update-failed.json");
     }
 
     public string DataDirectory { get; }
@@ -23,11 +29,19 @@ public sealed class AgentPaths
     public string ConfigurationPath { get; }
     public string TokenPath { get; }
     public string DatabasePath { get; }
+    public string StatusPath { get; }
+    public string RequestsDirectory { get; }
+    public string UpdateRequestPath { get; }
+    public string UpdatesDirectory { get; }
+    public string UpdatePendingPath { get; }
+    public string UpdateFailedPath { get; }
 
     public void EnsureDirectories()
     {
         Directory.CreateDirectory(DataDirectory);
         Directory.CreateDirectory(SpoolDirectory);
         Directory.CreateDirectory(LogDirectory);
+        Directory.CreateDirectory(RequestsDirectory);
+        Directory.CreateDirectory(UpdatesDirectory);
     }
 }
