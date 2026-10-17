@@ -91,6 +91,42 @@ public sealed class UpdateAndStatusTests : IDisposable
         Assert.True(await Sha256Verification.VerifyAsync(path, expected, CancellationToken.None));
     }
 
+    [Fact]
+    public void Tray_status_bewertet_ampel_tooltip_und_ereignisse()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var previous = Snapshot(true, 0, "2026.10.16");
+        var current = Snapshot(false, 1, "2026.10.17");
+        var red = TrayStatusEvaluator.Evaluate(current, now, now, previous);
+        var green = TrayStatusEvaluator.Evaluate(Snapshot(true, 0, "2026.10.16"), now, now);
+        var yellow = TrayStatusEvaluator.Evaluate(Snapshot(true, 1, "2026.10.16"), now, now);
+        var stale = TrayStatusEvaluator.Evaluate(Snapshot(true, 0, "2026.10.16"), now.AddMinutes(-1), now);
+        Assert.Equal(TrayIndicator.Red, red.Indicator);
+        Assert.Equal(TrayIndicator.Green, green.Indicator);
+        Assert.Equal(TrayIndicator.Yellow, yellow.Indicator);
+        Assert.Equal(TrayIndicator.Red, stale.Indicator);
+        Assert.True(red.Tooltip.Length <= 127);
+        Assert.Equal(3, red.Events.Count);
+    }
+
+    [Fact]
+    public void Logfilter_erkennt_level_filtert_und_liefert_ende()
+    {
+        var lines = new[] { "eins", "[Warning] zwei", "[Error] drei", "[Critical] vier" };
+        Assert.Equal(LogLevelKind.Warning, LogFilter.GetLevel(lines[1]));
+        Assert.Equal(LogLevelKind.Error, LogFilter.GetLevel(lines[2]));
+        Assert.Equal(2, lines.Count(line => LogFilter.Matches(line, LogFilterMode.ErrorsOnly)));
+        Assert.Equal(new[] { "[Error] drei", "[Critical] vier" }, LogFilter.Tail(lines, 2));
+    }
+
+    private static AgentStatusSnapshot Snapshot(bool connected, int uncertain, string version)
+    {
+        return new AgentStatusSnapshot(version, DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, connected,
+            DateTimeOffset.UtcNow, "https://cloud", "Agent", [new RouteStatus("Ziel", "Drucker", "driver",
+                10, true, "ready", null)], new Dictionary<string, int>(), 0, uncertain, null,
+            new UpdateStatus("up_to_date", version));
+    }
+
     public void Dispose()
     {
         if (Directory.Exists(_directory))

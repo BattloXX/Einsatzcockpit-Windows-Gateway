@@ -3,6 +3,7 @@ using Einsatzcockpit.PrintAgent.Core.Jobs;
 using Einsatzcockpit.PrintAgent.Logging;
 using Einsatzcockpit.PrintAgent.Pairing;
 using Einsatzcockpit.PrintAgent.Security;
+using Einsatzcockpit.PrintAgent.Tray;
 using Einsatzcockpit.PrintAgent.Worker;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -37,6 +38,8 @@ static async Task<int> RunCommandAsync(string[] args, AgentPaths paths)
 {
     switch (args[0].ToLowerInvariant())
     {
+        case "tray":
+            return RunTray(paths);
         case "pair":
             return await PairAsync(args, paths);
         case "status":
@@ -56,11 +59,33 @@ static async Task<int> RunCommandAsync(string[] args, AgentPaths paths)
             Console.WriteLine("EinsatzcockpitPrintAgent.exe pair --url <cloud> --code <CODE>");
             Console.WriteLine("EinsatzcockpitPrintAgent.exe status");
             Console.WriteLine("EinsatzcockpitPrintAgent.exe unpair");
+            Console.WriteLine("EinsatzcockpitPrintAgent.exe tray");
             return 0;
         default:
             Console.Error.WriteLine("Unbekannter Befehl. --help zeigt die verfügbaren Befehle.");
             return 1;
     }
+}
+
+static int RunTray(AgentPaths paths)
+{
+    using var mutex = new Mutex(true, @"Local\EinsatzcockpitPrintAgentTray", out var createdNew);
+    if (!createdNew)
+    {
+        return 0;
+    }
+
+    var exitCode = 0;
+    var thread = new Thread(() =>
+    {
+        Application.EnableVisualStyles();
+        Application.SetCompatibleTextRenderingDefault(false);
+        Application.Run(new TrayApplicationContext(paths));
+    });
+    thread.SetApartmentState(ApartmentState.STA);
+    thread.Start();
+    thread.Join();
+    return exitCode;
 }
 
 static async Task<int> PairAsync(string[] args, AgentPaths paths)
