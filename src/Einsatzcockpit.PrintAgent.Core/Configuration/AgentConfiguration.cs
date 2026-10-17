@@ -9,14 +9,21 @@ public sealed record AgentOptions(
     string LogLevel = "Information",
     IReadOnlyList<string>? AllowedCommands = null,
     string? EdgePath = null,
-    int HtmlReadyTimeoutS = 9)
+    int HtmlReadyTimeoutS = 9,
+    bool AutoUpdate = true,
+    int UpdateIntervalH = 6,
+    string UpdateRepo = "BattloXX/Einsatzcockpit-Windows-Gateway")
 {
     public IReadOnlyList<string> EffectiveAllowedCommands => AllowedCommands ?? [];
 
     public AgentOptions Normalized() => this with
     {
         AllowedCommands = EffectiveAllowedCommands,
-        HtmlReadyTimeoutS = HtmlReadyTimeoutS > 0 ? HtmlReadyTimeoutS : 9
+        HtmlReadyTimeoutS = HtmlReadyTimeoutS > 0 ? HtmlReadyTimeoutS : 9,
+        UpdateIntervalH = UpdateIntervalH > 0 ? UpdateIntervalH : 6,
+        UpdateRepo = string.IsNullOrWhiteSpace(UpdateRepo)
+            ? "BattloXX/Einsatzcockpit-Windows-Gateway"
+            : UpdateRepo
     };
 }
 

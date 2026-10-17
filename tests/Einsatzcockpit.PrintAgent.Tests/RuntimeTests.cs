@@ -6,6 +6,7 @@ using Einsatzcockpit.PrintAgent.Core.Cloud;
 using Einsatzcockpit.PrintAgent.Core.Jobs;
 using Einsatzcockpit.PrintAgent.Core.Protocol;
 using Einsatzcockpit.PrintAgent.Core.Runtime;
+using Einsatzcockpit.PrintAgent.Core.Update;
 
 namespace Einsatzcockpit.PrintAgent.Tests;
 
@@ -144,9 +145,20 @@ public sealed class RuntimeTests : IDisposable
         Assert.NotNull(store.Get("new"));
     }
 
-    private AgentRuntime Runtime(JobStore store, ICloudChannel cloud) => new(store,
+    [Fact]
+    public async Task Lease_poll_wird_bei_ausstehendem_update_uebersprungen()
+    {
+        var store = new JobStore(_path);
+        var cloud = new TestCloud();
+        await using var runtime = Runtime(store, cloud, new TestUpdateGate(true));
+        await runtime.PollLeasesAsync(CancellationToken.None);
+        Assert.Equal(0, cloud.LeaseRequests);
+    }
+
+    private AgentRuntime Runtime(JobStore store, ICloudChannel cloud, IUpdateGate? updateGate = null) => new(store,
         new RecoveryService(store, new TestSpooler(), new FixedClock(_now)),
-        Processor(store, cloud), cloud, new TestReadiness(), new TestInventory(), "1.0", new HostInfo("h", "os", "m"), new FixedClock(_now));
+        Processor(store, cloud), cloud, new TestReadiness(), new TestInventory(), "1.0", new HostInfo("h", "os", "m"),
+        new FixedClock(_now), updateGate: updateGate);
     private JobProcessor Processor(JobStore store, ICloudChannel cloud, TestFetcher? fetcher = null, IPrintSubmitter? submitter = null, TestSpooler? spooler = null) =>
         new(store, cloud, fetcher ?? new TestFetcher(), submitter ?? new GoodSubmitter(), spooler ?? new TestSpooler(), new FixedClock(_now));
     private static LeaseGrant Grant(string id, string token = "t", int generation = 1) => new(id, token, generation, 60, "alarm", "url", "pdf", new(), new RouteConfig(1, 2, "Q", "driver"));
@@ -168,12 +180,21 @@ public sealed class RuntimeTests : IDisposable
     private sealed record Sent(string Type, object Payload);
     private sealed class TestCloud : ICloudChannel
     {
+        public int LeaseRequests { get; private set; }
         public List<Sent> Messages { get; } = [];
-        public Task<LeaseGrant[]> RequestLeasesAsync(int max) => Task.FromResult(Array.Empty<LeaseGrant>());
+        public Task<LeaseGrant[]> RequestLeasesAsync(int max)
+        {
+            LeaseRequests++;
+            return Task.FromResult(Array.Empty<LeaseGrant>());
+        }
         public Task<IntentResult> SendIntentAsync(string jobId, string token) => Task.FromResult(new IntentResult(jobId, true));
         public Task EnqueueStatusAsync(JobStatusMessage status) => Task.CompletedTask;
         public Task RenewAsync(IReadOnlyList<LeaseReference> leases) => Task.CompletedTask;
         public Task SendMessageAsync(string type, object payload, CancellationToken cancellationToken = default) { Messages.Add(new(type, payload)); return Task.CompletedTask; }
+    }
+    private sealed class TestUpdateGate(bool isUpdatePending) : IUpdateGate
+    {
+        public bool IsUpdatePending => isUpdatePending;
     }
     private sealed class FixedClock(DateTimeOffset now) : IClock { public DateTimeOffset UtcNow => now; }
     private sealed class TestFetcher : IArtifactFetcher { public Exception? Error { get; set; } public Task<string> FetchAsync(LeaseGrant grant, CancellationToken cancellationToken) => Error is null ? Task.FromResult("x.pdf") : Task.FromException<string>(Error); }

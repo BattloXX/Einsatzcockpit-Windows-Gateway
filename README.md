@@ -70,7 +70,10 @@ Spezifikation (Protokoll, Lease, Zustandsmaschine, Migration):
    z. B. *Kommandofunk*: PC A mit Priorität 10, PC B mit Priorität 20 auf **dasselbe** Druckziel.
 5. Druckregeln und Druckdialoge verwenden das Druckziel wie jeden anderen Drucker.
 
-Update: neue Version entpacken und `install.ps1` ohne Parameter erneut ausführen.
+Updates werden standardmäßig automatisch geprüft (zwei Minuten nach Start, danach alle sechs
+Stunden). Ein angemeldeter Benutzer darf die lesbare `status.json` und `logs\` ansehen sowie
+`requests\update-request` für eine sofortige Prüfung anlegen; `token.bin` und `agent.db`
+bleiben ausschließlich für den Dienst zugänglich.
 Deinstallation: `install.ps1 -Uninstall`. Daten und Token bleiben dabei erhalten.
 
 Für Druckerfreigaben eines Druckservers kann der Dienst unter einem eigenen Konto laufen:
@@ -93,7 +96,10 @@ EinsatzcockpitPrintAgent.exe unpair                             Token löschen
   "log_level": "Information",
   "allowed_commands": ["C:\\Tools\\SumatraPDF.exe"],
   "edge_path": null,
-  "html_ready_timeout_s": 9
+  "html_ready_timeout_s": 9,
+  "auto_update": true,
+  "update_interval_h": 6,
+  "update_repo": "BattloXX/Einsatzcockpit-Windows-Gateway"
 }
 ```
 
@@ -102,6 +108,21 @@ Routen, Prioritäten und Druckoptionen werden zentral in der Web-Oberfläche gep
 
 Logs liegen im Windows-Ereignisprotokoll (Anwendung, Quelle „Einsatzcockpit Druckagent“) und in
 `logs\` im Datenverzeichnis (14 Tage).
+
+## Tray-Symbol
+
+Nach der Anmeldung startet ein Tray-Symbol im Benutzerkontext. Grün bedeutet verbunden und bereit,
+gelb weist auf nicht bereite Routen, unklare Aufträge oder ein fehlgeschlagenes Update hin, rot auf
+eine getrennte Verbindung, einen gestoppten Dienst oder eine veraltete Statusdatei. Das Menü zeigt
+Status, Protokoll und Hilfe, öffnet Datenordner oder Einsatzcockpit und kann eine Updateprüfung
+anfordern. „Beenden“ beendet nur das Tray-Symbol, nicht den Windows-Dienst.
+
+## Automatische Updates
+
+`auto_update` und `update_interval_h` in `agent.json` steuern die automatische Prüfung. Updates
+werden bei laufenden Druckübergaben pausiert und nach einer erfolgreichen Gesundheitsprüfung
+übernommen; andernfalls wird auf die vorherige EXE zurückgerollt. Fehlgeschlagene Versionen stehen
+in `update-failed.json` und werden nicht erneut automatisch installiert.
 
 ## Entwicklung
 

@@ -7,11 +7,13 @@ using Einsatzcockpit.PrintAgent.Core.Configuration;
 using Einsatzcockpit.PrintAgent.Core.Jobs;
 using Einsatzcockpit.PrintAgent.Core.Protocol;
 using Einsatzcockpit.PrintAgent.Core.Runtime;
+using Einsatzcockpit.PrintAgent.Core.Status;
 using Einsatzcockpit.PrintAgent.Fetching;
 using Einsatzcockpit.PrintAgent.Inventory;
 using Einsatzcockpit.PrintAgent.Printing;
 using Einsatzcockpit.PrintAgent.Rendering;
 using Einsatzcockpit.PrintAgent.Security;
+using Einsatzcockpit.PrintAgent.Update;
 using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
@@ -23,6 +25,7 @@ public sealed class AgentWorker : BackgroundService
     private readonly ILoggerFactory _loggerFactory;
     private readonly ILogger<AgentWorker> _logger;
     private AgentRuntime? _runtime;
+    private StatusFile? _statusFile;
 
     public AgentWorker(AgentPaths paths, ILoggerFactory loggerFactory, ILogger<AgentWorker> logger)
     {
@@ -34,6 +37,8 @@ public sealed class AgentWorker : BackgroundService
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         _paths.EnsureDirectories();
+        AgentAcl.Apply(_paths, _logger);
+        _statusFile = new StatusFile(_paths.StatusPath);
         while (!stoppingToken.IsCancellationRequested)
         {
             var options = Configuration.AgentOptions.Load(_paths);
@@ -51,7 +56,8 @@ public sealed class AgentWorker : BackgroundService
             {
                 _runtime = CreateRuntime(options, token);
                 await _runtime.StartAsync(stoppingToken);
-                await Task.Delay(Timeout.InfiniteTimeSpan, stoppingToken);
+                AgentAcl.Apply(_paths, _logger);
+                await RunUpdateLoopAsync(options, stoppingToken);
             }
             catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested)
             {
@@ -115,7 +121,8 @@ public sealed class AgentWorker : BackgroundService
             .GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion ?? "unbekannt";
         var hostInfo = new HostInfo(Environment.MachineName, Environment.OSVersion.VersionString,
             Environment.MachineName);
-        return new AgentRuntime(store, recovery, processor, cloud, readiness, inventory, version, hostInfo);
+        return new AgentRuntime(store, recovery, processor, cloud, readiness, inventory, version, hostInfo,
+            statusSink: _statusFile, cloudUrl: options.CloudUrl, updateGate: new FileUpdateGate(_paths));
     }
 
     private string? ReadToken(ITokenStore store)
@@ -128,6 +135,38 @@ public sealed class AgentWorker : BackgroundService
         {
             _logger.LogError(ex, "Gespeichertes Device-Token konnte nicht gelesen werden.");
             return null;
+        }
+    }
+
+    private async Task RunUpdateLoopAsync(Einsatzcockpit.PrintAgent.Core.Configuration.AgentOptions options,
+        CancellationToken cancellationToken)
+    {
+        var updater = new UpdateService(_paths, _loggerFactory.CreateLogger<UpdateService>(), _statusFile!);
+        updater.DeleteStalePendingMarker();
+        var firstCheck = DateTimeOffset.UtcNow.AddMinutes(2);
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            AgentAcl.Apply(_paths, _logger);
+            var requested = File.Exists(_paths.UpdateRequestPath);
+            if (requested || DateTimeOffset.UtcNow >= firstCheck)
+            {
+                if (requested)
+                {
+                    try
+                    {
+                        File.Delete(_paths.UpdateRequestPath);
+                    }
+                    catch (Exception ex)
+                    {
+                        _logger.LogWarning(ex, "Update-Anfrage konnte nicht gelöscht werden.");
+                    }
+                }
+
+                await updater.CheckAsync(options, cancellationToken);
+                firstCheck = DateTimeOffset.UtcNow.AddHours(options.UpdateIntervalH);
+            }
+
+            await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken);
         }
     }
 }

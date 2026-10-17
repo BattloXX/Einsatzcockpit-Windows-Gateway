@@ -3,6 +3,14 @@
 Stand 2026-10-16. Diese Datei ist die verbindliche Spezifikation für die Cloud
 (`BattloXX/Einsatzcockpit`) und den Agent (`BattloXX/Einsatzcockpit-Windows-Gateway`).
 
+## Lokaler Status und Updates
+
+Der Dienst schreibt alle fünf Sekunden `%ProgramData%\Einsatzcockpit\PrintAgent\status.json`.
+Die lokale Gruppe Benutzer darf diese Datei und `logs\` lesen. Nur `requests\` ist zusätzlich
+für Benutzer beschreibbar, damit ein Trayprozess eine `update-request` anlegen kann. Token und
+SQLite-Datenbank erhalten keine erweiterten Rechte. Automatische Updates warten auf das Ende
+aller lokalen Druckübergaben und prüfen das ZIP gegen das Release-Asset `SHA256SUMS.txt`.
+
 ## Ziel
 
 Ein oder mehrere Windows-PCs drucken ohne zusätzliche Hardware für Einsatzcockpit. Der

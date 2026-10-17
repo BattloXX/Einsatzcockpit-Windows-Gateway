@@ -33,6 +33,14 @@ $DisplayName = "Einsatzcockpit Druckagent"
 $InstallDir = Join-Path $env:ProgramFiles "Einsatzcockpit\PrintAgent"
 $Exe = Join-Path $InstallDir "EinsatzcockpitPrintAgent.exe"
 $EventSource = "Einsatzcockpit Druckagent"
+$RunPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run"
+$TrayValue = "EinsatzcockpitPrintAgentTray"
+
+function Stop-TrayProcesses {
+    Get-CimInstance Win32_Process -Filter "Name='EinsatzcockpitPrintAgent.exe'" |
+        Where-Object { $_.CommandLine -match "tray" } |
+        ForEach-Object { Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }
+}
 
 $principal = New-Object Security.Principal.WindowsPrincipal([Security.Principal.WindowsIdentity]::GetCurrent())
 if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
@@ -50,6 +58,8 @@ function Stop-AgentService {
 
 if ($Uninstall) {
     Stop-AgentService
+    Stop-TrayProcesses
+    Remove-ItemProperty -Path $RunPath -Name $TrayValue -ErrorAction SilentlyContinue
     if (Get-Service -Name $ServiceName -ErrorAction SilentlyContinue) {
         & sc.exe delete $ServiceName | Out-Null
     }
@@ -63,6 +73,7 @@ if (-not (Test-Path $Source)) {
 }
 
 Stop-AgentService
+Stop-TrayProcesses
 New-Item -ItemType Directory -Force -Path $InstallDir | Out-Null
 Copy-Item -Force $Source $Exe
 
@@ -100,5 +111,8 @@ if ($CloudUrl -and $PairingCode) {
 }
 
 Start-Service -Name $ServiceName
+New-Item -Path $RunPath -Force | Out-Null
+Set-ItemProperty -Path $RunPath -Name $TrayValue -Value ("`"$Exe`" tray")
+Start-Process -FilePath $Exe -ArgumentList "tray" -ErrorAction SilentlyContinue
 Write-Host "Fertig. Status: " -NoNewline
 & $Exe status

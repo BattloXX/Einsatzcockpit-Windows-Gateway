@@ -1,30 +1,20 @@
-Erste Version des nativen Windows-Druckagents für Einsatzcockpit, als .NET-10-Dienst ohne Docker.
+## Neu in dieser Version
+- **Tray-Symbol** für jeden angemeldeten Benutzer, startet automatisch:
+  - Ampelfarbe grün, gelb oder rot für Verbindung und Bereitschaft, mit Hinweisen bei Verbindungsverlust, unklaren Aufträgen und Updates
+  - **Statusfenster** mit Druckzielen, Aufträgen und Update-Stand
+  - **Protokoll** mit Filter (Warnungen/Fehler), Suche und automatischem Mitlaufen
+  - **Hilfe** zu Kopplung, Druckereinrichtung, Redundanz, „Unklar – bitte prüfen“, Updates und Fehlersuche
+- **Automatische Updates** aus GitHub-Releases:
+  - Prüfung alle 6 Stunden oder auf Knopfdruck im Tray, mit SHA256-Prüfung
+  - während eines Updates nimmt der Agent keine Aufträge an, ein redundanter PC übernimmt
+  - Installation nur ohne laufende Druckübergabe
+  - Gesundheitscheck nach dem Neustart, bei Fehlschlag automatischer Rollback; die Version wird dann gesperrt
+  - in `agent.json` abschaltbar mit `"auto_update": false`
 
-**Voraussetzung:** Einsatzcockpit mit den Pull Requests #591 und #592 (Migration 0289).
+**Hinweis:** Auf PCs mit Version 2026.10.16 dieses Paket einmal mit `install.ps1` installieren. Erst ab dieser Version aktualisiert sich der Agent selbst.
 
-## Funktionen
-- Windows-Dienst `EinsatzcockpitPrintAgent`:
-  - startet automatisch (verzögert), auch ohne Anmeldung
-  - startet nach einem Absturz von selbst neu
-- Nur ausgehende WSS-Verbindung; jeder PC hat ein eigenes Pairing-Token, das mit DPAPI geschützt gespeichert wird.
-- Redundanz: Mehrere PCs bedienen ein Druckziel (z. B. Kommandofunk) mit Priorität und automatischem Ausweichen.
-- Sichere Druckübergabe:
-  - gedruckt wird nur nach Freigabe durch die Cloud
-  - bei einem Neustart mitten im Druck wird der Auftrag als „Unklar – bitte prüfen“ gemeldet statt doppelt gedruckt
-- Druckwege:
-  - Windows-Druckertreiber
-  - PDF direkt (RAW + PJL)
-  - IPP direkt
-  - Ordnerablage
-  - externes Programm (nur über eine lokale Allowlist freigegeben)
-- Kartenausdrucke werden mit dem vorhandenen Microsoft Edge gerendert.
-- Inventar, Druckerfähigkeiten, Bereitschafts- und Identitätsprüfung werden an die Cloud gemeldet.
-
-## Installation
-ZIP entpacken und PowerShell **als Administrator** starten:
+Installation: ZIP entpacken und PowerShell **als Administrator** starten:
 
 ```powershell
 .\install.ps1 -CloudUrl https://<einsatzcockpit> -PairingCode <CODE>
 ```
-
-Den Pairing-Code erzeugt man in Einsatzcockpit unter *Gateway / Druck → Gateway anlegen (Typ: Windows-Druckagent)*. Details stehen in der README.
