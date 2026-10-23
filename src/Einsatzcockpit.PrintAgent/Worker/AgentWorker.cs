@@ -36,6 +36,7 @@ public sealed class AgentWorker : BackgroundService
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
+        _logger.LogInformation("agent_service_started host={Host} at={At}", Environment.MachineName, DateTimeOffset.UtcNow);
         _paths.EnsureDirectories();
         AgentAcl.Apply(_paths, _logger);
         _statusFile = new StatusFile(_paths.StatusPath);
@@ -109,7 +110,7 @@ public sealed class AgentWorker : BackgroundService
         var fetcher = new HttpArtifactFetcher(_paths.SpoolDirectory, options.Proxy, renderer);
         var proxy = string.IsNullOrWhiteSpace(options.Proxy) ? null : new WebProxy(options.Proxy);
         var transport = new ClientWebSocketTransport(new WebSocketTransportOptions(proxy));
-        var cloud = new CloudConnection(transport, AgentConfiguration.WebSocketUri(options.CloudUrl!), token, store);
+        var cloud = new CloudConnection(transport, AgentConfiguration.WebSocketUri(options.CloudUrl!), token, store, logger: _loggerFactory.CreateLogger<CloudConnection>());
         var processor = new JobProcessor(store, cloud, fetcher, submitters, spooler, new SystemClock(),
             _loggerFactory.CreateLogger<JobProcessor>());
         var recovery = new RecoveryService(store, spooler, new SystemClock(),

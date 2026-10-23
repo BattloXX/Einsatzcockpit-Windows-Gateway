@@ -10,6 +10,11 @@ using Microsoft.Extensions.Hosting;
 using Microsoft.Extensions.Logging;
 
 var paths = new AgentPaths();
+if (args.Length > 0 && args[0].Equals("tray", StringComparison.OrdinalIgnoreCase))
+{
+    // Tray liest Status/Logs; ProgramData ist fuer normale Benutzer schreibgeschuetzt.
+    return RunTray(paths);
+}
 paths.EnsureDirectories();
 if (args.Length > 0)
 {

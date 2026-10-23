@@ -6,6 +6,8 @@ namespace Einsatzcockpit.PrintAgent.Core.Cloud;
 
 public interface IWebSocketTransport
 {
+    int? CloseCode => null;
+    int? ConnectStatusCode => null;
     Task ConnectAsync(Uri uri, string bearerToken, CancellationToken cancellationToken);
     Task SendAsync(string message, CancellationToken cancellationToken = default);
     Task<string?> ReceiveAsync(CancellationToken cancellationToken = default);
@@ -18,6 +20,8 @@ public sealed class ClientWebSocketTransport : IWebSocketTransport, IDisposable
 {
     private readonly WebSocketTransportOptions _options;
     private ClientWebSocket? _socket;
+    public int? CloseCode { get; private set; }
+    public int? ConnectStatusCode => _socket is null ? null : (int)_socket.HttpStatusCode;
 
     public ClientWebSocketTransport(WebSocketTransportOptions? options = null)
     {
@@ -26,8 +30,10 @@ public sealed class ClientWebSocketTransport : IWebSocketTransport, IDisposable
 
     public async Task ConnectAsync(Uri uri, string bearerToken, CancellationToken cancellationToken)
     {
+        CloseCode = null;
         _socket?.Dispose();
         _socket = new ClientWebSocket();
+        _socket.Options.CollectHttpResponseDetails = true;
         _socket.Options.SetRequestHeader("Authorization", "Bearer " + bearerToken);
         if (_options.Proxy is not null)
         {
@@ -58,6 +64,7 @@ public sealed class ClientWebSocketTransport : IWebSocketTransport, IDisposable
             var result = await _socket.ReceiveAsync(buffer, cancellationToken);
             if (result.MessageType == WebSocketMessageType.Close)
             {
+                CloseCode = (int?)result.CloseStatus;
                 return null;
             }
             stream.Write(buffer, 0, result.Count);

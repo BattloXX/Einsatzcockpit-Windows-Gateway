@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Text.Json;
+using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Logging.Abstractions;
 using Einsatzcockpit.PrintAgent.Core.Abstractions;
 using Einsatzcockpit.PrintAgent.Core.Jobs;
 using Einsatzcockpit.PrintAgent.Core.Protocol;
@@ -18,10 +20,16 @@ public sealed class CloudConnection : ICloudChannel
     private CancellationTokenSource? _lifetime;
     private Task? _loop;
     private volatile bool _connected;
-    private int _heartbeatSeconds = 30;
+    private volatile int _heartbeatSeconds = 30;
+    private volatile bool _configured;
+    private readonly ILogger<CloudConnection> _logger;
+    private string _connectionId = "";
+    private string? _gatewayId;
+    public DateTimeOffset? LastConnectedAt { get; private set; }
 
-    public CloudConnection(IWebSocketTransport transport, Uri uri, string bearerToken, JobStore store, IClock? clock = null)
+    public CloudConnection(IWebSocketTransport transport, Uri uri, string bearerToken, JobStore store, IClock? clock = null, ILogger<CloudConnection>? logger = null)
     {
+        _logger = logger ?? NullLogger<CloudConnection>.Instance;
         _transport = transport;
         _uri = uri;
         _token = bearerToken;
@@ -35,7 +43,7 @@ public sealed class CloudConnection : ICloudChannel
     public event Func<AbandonMessage, Task>? Abandon;
     public event Func<AckMessage, Task>? AckReceived;
     public event Func<Task>? Connected;
-    public bool IsConnected => _connected;
+    public bool IsConnected => _connected && _configured;
 
     public static TimeSpan ReconnectDelay(int failures)
     {
@@ -61,7 +69,7 @@ public sealed class CloudConnection : ICloudChannel
             return;
         }
         await _lifetime.CancelAsync();
-        try { await _transport.CloseAsync(); } catch { }
+        try { using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(5)); await _transport.CloseAsync(timeout.Token); } catch { }
         if (_loop is not null)
         {
             try { await _loop; } catch (OperationCanceledException) { }
@@ -132,40 +140,67 @@ public sealed class CloudConnection : ICloudChannel
         var failures = 0;
         while (!cancellationToken.IsCancellationRequested)
         {
+            _connectionId = Guid.NewGuid().ToString("N");
+            using var session = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            Task? receive = null;
+            Task? heartbeat = null;
             try
             {
-                await _transport.ConnectAsync(_uri, _token, cancellationToken);
+                _logger.LogInformation("agent_connection_attempt gateway_id={GatewayId} connection_id={ConnectionId} at={At}", _gatewayId, _connectionId, _clock.UtcNow);
+                using (var connectTimeout = CancellationTokenSource.CreateLinkedTokenSource(session.Token))
+                {
+                    connectTimeout.CancelAfter(TimeSpan.FromSeconds(20));
+                    await _transport.ConnectAsync(_uri, _token, connectTimeout.Token);
+                }
                 _connected = true;
+                _logger.LogInformation("agent_authentication_succeeded gateway_id={GatewayId} connection_id={ConnectionId} at={At}", _gatewayId, _connectionId, _clock.UtcNow);
+                // Hello vor Outbox und allen anderen Nachrichten, bei jedem Reconnect.
+                if (Connected is not null) await Connected();
+                await _outbox.PumpAsync(session.Token);
+                receive = ReceiveLoopAsync(session.Token);
+                heartbeat = HeartbeatLoopAsync(session.Token);
+                var completed = await Task.WhenAny(receive, heartbeat);
+                await completed;
                 failures = 0;
-                await _outbox.PumpAsync(cancellationToken);
-                if (Connected is not null)
-                {
-                    await Connected();
-                }
-                using var heartbeat = new PeriodicTimer(TimeSpan.FromSeconds(_heartbeatSeconds));
-                var receive = ReceiveLoopAsync(cancellationToken);
-                while (!cancellationToken.IsCancellationRequested && !receive.IsCompleted)
-                {
-                    if (await heartbeat.WaitForNextTickAsync(cancellationToken))
-                    {
-                        await SendMessageAsync("heartbeat", new { }, cancellationToken);
-                    }
-                }
-                await receive;
+                _logger.LogWarning("agent_connection_closed gateway_id={GatewayId} connection_id={ConnectionId} close_code={CloseCode} at={At}",
+                    _gatewayId, _connectionId, _transport.CloseCode, _clock.UtcNow);
+                if (_transport.CloseCode == 4401)
+                    _logger.LogWarning("agent_authentication_failed gateway_id={GatewayId} connection_id={ConnectionId} at={At}", _gatewayId, _connectionId, _clock.UtcNow);
             }
             catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { break; }
-            catch { }
+            catch (Exception ex)
+            {
+                if (_transport.ConnectStatusCode is 401 or 403)
+                    _logger.LogWarning("agent_handshake_rejected gateway_id={GatewayId} connection_id={ConnectionId} http_status={Status} at={At}",
+                        _gatewayId, _connectionId, _transport.ConnectStatusCode, _clock.UtcNow);
+                // Keine rohen Fehlerantworten, Header, Tokens oder URLs loggen.
+                _logger.LogWarning("agent_connection_failed gateway_id={GatewayId} connection_id={ConnectionId} error_type={ErrorType} at={At}",
+                    _gatewayId, _connectionId, ex.GetType().Name, _clock.UtcNow);
+            }
             finally
             {
+                if (_configured) failures = 0;
                 _connected = false;
-                foreach (var request in _requests.Values)
-                {
-                    request.TrySetCanceled();
-                }
-                try { await _transport.CloseAsync(CancellationToken.None); } catch { }
+                _configured = false;
+                await session.CancelAsync();
+                foreach (var request in _requests.Values) request.TrySetCanceled();
+                try { using var close = new CancellationTokenSource(TimeSpan.FromSeconds(5)); await _transport.CloseAsync(close.Token); } catch { }
+                if (receive is not null) { try { await receive; } catch { } }
+                if (heartbeat is not null) { try { await heartbeat; } catch { } }
             }
-            var delay = ReconnectDelay(failures++);
-            await Task.Delay(delay, cancellationToken);
+            await Task.Delay(ReconnectDelay(failures++), cancellationToken);
+        }
+    }
+
+    private async Task HeartbeatLoopAsync(CancellationToken cancellationToken)
+    {
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            await Task.Delay(TimeSpan.FromSeconds(_heartbeatSeconds), cancellationToken);
+            await SendMessageAsync("heartbeat", new { }, cancellationToken);
+            // Heartbeats werden nur persistiert. Ping/Pong liefert auch bei pausiertem
+            // Lease-Polling (z.B. Update) einen Empfangsnachweis fuer den Idle-Timeout.
+            await SendMessageAsync("ping", new { }, cancellationToken);
         }
     }
 
@@ -173,7 +208,9 @@ public sealed class CloudConnection : ICloudChannel
     {
         while (!cancellationToken.IsCancellationRequested)
         {
-            var raw = await _transport.ReceiveAsync(cancellationToken);
+            using var receiveTimeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            receiveTimeout.CancelAfter(TimeSpan.FromSeconds(75));
+            var raw = await _transport.ReceiveAsync(receiveTimeout.Token);
             if (raw is null)
             {
                 return;
@@ -202,8 +239,20 @@ public sealed class CloudConnection : ICloudChannel
                 break;
             case "config_sync":
                 var config = Deserialize<ConfigSync>(message.Payload);
+                if (string.IsNullOrWhiteSpace(config.AgentId) || config.Routes is null || config.Intervals is null)
+                    throw new JsonException("Unvollstaendige Agent-Konfiguration.");
                 _heartbeatSeconds = Math.Max(1, config.Intervals.HeartbeatS);
                 if (ConfigSyncReceived is not null) await ConfigSyncReceived(config);
+                if (!_configured)
+                {
+                    LastConnectedAt = _clock.UtcNow;
+                    _logger.LogInformation("agent_reconnect_ready gateway_id={GatewayId} connection_id={ConnectionId} at={At}",
+                        config.AgentId, _connectionId, LastConnectedAt);
+                }
+                _gatewayId = config.AgentId;
+                _configured = true;
+                _logger.LogInformation("agent_config_sync gateway_id={GatewayId} connection_id={ConnectionId} at={At}",
+                    config.AgentId, _connectionId, LastConnectedAt);
                 break;
             case "job_available" when JobAvailable is not null: await JobAvailable(Deserialize<JobAvailableMessage>(message.Payload)); break;
             case "cancel_job" when CancelJob is not null: await CancelJob(Deserialize<CancelJobMessage>(message.Payload)); break;
@@ -224,7 +273,12 @@ public sealed class CloudConnection : ICloudChannel
             throw new InvalidOperationException("Keine Cloud-Verbindung.");
         }
         await _sendGate.WaitAsync(cancellationToken);
-        try { await _transport.SendAsync(raw, cancellationToken); }
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            timeout.CancelAfter(TimeSpan.FromSeconds(15));
+            await _transport.SendAsync(raw, timeout.Token);
+        }
         finally { _sendGate.Release(); }
     }
 

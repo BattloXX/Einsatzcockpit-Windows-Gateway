@@ -222,3 +222,23 @@ Die Projektaufteilung:
 ## Lizenz
 
 LGPL-2.1, wie das Linux-Gateway.
+
+
+## Verbindung und Tray: weiterer Bugfix nach 2026.10.23
+
+Die Cloud sendet Agent- und Job-IDs numerisch. Der Agent konvertiert diese jetzt gezielt
+zwischen JSON-Zahlen und lokalen SQLite-Strings; Tokens und Spool-Referenzen bleiben Strings.
+Empfangsfehler werden nicht mehr still geschluckt. Nach Netzunterbrechung sendet der Reconnect
+Hello und Inventar erneut. Erst ein gueltiges config_sync bestaetigt die lokale Verbindung.
+
+Das Tray-Symbol startet ohne Schreibversuch auf geschuetzte ProgramData-Dienstverzeichnisse.
+Es bleibt eine Anwendung der angemeldeten Windows-Sitzung; LocalSystem und Session 0
+sind kein Desktop fuer ein sichtbares Tray-Symbol. HKLM-Run startet es bei Anmeldung.
+Nach Installation des neuen Bugfix-Releases einmal ab-/anmelden oder als normaler Benutzer
+`"C:\Program Files\Einsatzcockpit\PrintAgent\EinsatzcockpitPrintAgent.exe" tray` starten
+(in PowerShell vor dem zitierten Programmpfad `&` verwenden). Den Dienst nicht auf ein
+Benutzerkonto umstellen. Im Windows-Menue fuer ausgeblendete Taskleistensymbole nachsehen.
+
+Cloud-Deployment mit Migration 0306 und neu gestarteten Workern ist fuer die gemeinsame
+Presence und Diagnose erforderlich. Der Release 2026.10.23 enthaelt diesen weiteren Bugfix
+noch nicht. Details und Abnahme: Cloud-Dokumentation `docs/print-agent-architektur.md`.
