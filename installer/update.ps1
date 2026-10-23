@@ -73,7 +73,7 @@ try {
 
     if (Test-Path $Exe) { Copy-Item -Force $Exe $Backup }
     Copy-Item -Force (Join-Path $PackageDir "EinsatzcockpitPrintAgent.exe") $Exe
-    foreach ($name in "install.ps1", "update.ps1", "README.md") {
+    foreach ($name in "install.ps1", "Install.Common.ps1", "Installieren.cmd", "update.ps1", "README.md") {
         $source = Join-Path $PackageDir $name
         if (Test-Path $source) { Copy-Item -Force $source (Join-Path $InstallDir $name) }
     }

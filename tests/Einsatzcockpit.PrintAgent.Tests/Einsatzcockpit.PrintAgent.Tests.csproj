@@ -16,6 +16,8 @@
 
   <ItemGroup>
     <Using Include="Xunit" />
+    <Compile Include="../../src/Einsatzcockpit.PrintAgent/Pairing/PairingClient.cs" Link="PairingClient.cs" />
+    <Compile Include="../../src/Einsatzcockpit.PrintAgent/Security/ITokenStore.cs" Link="ITokenStore.cs" />
   </ItemGroup>
 
   <ItemGroup>

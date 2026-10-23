@@ -91,7 +91,9 @@ static int RunTray(AgentPaths paths)
 static async Task<int> PairAsync(string[] args, AgentPaths paths)
 {
     var url = ValueAfter(args, "--url");
-    var code = ValueAfter(args, "--code");
+    var code = args.Contains("--code-stdin", StringComparer.Ordinal)
+        ? await Console.In.ReadLineAsync()
+        : ValueAfter(args, "--code");
     if (string.IsNullOrWhiteSpace(url) || string.IsNullOrWhiteSpace(code))
     {
         Console.Error.WriteLine("Verwendung: pair --url <cloud> --code <CODE>");
