@@ -189,7 +189,7 @@ Describe 'Frische Verbindungsbestaetigung' {
 Describe 'Windows-Schnittstellen des Installers' {
     BeforeEach {
         Mock Get-CimInstance { [pscustomobject]@{ Name = 'EinsatzcockpitPrintAgent' } }
-        Mock Invoke-CimMethod { [pscustomobject]@{ ReturnValue = 0 } }
+        Mock Invoke-CimMethod { [pscustomobject]@{ ReturnValue = 0 } } -RemoveParameterType InputObject
     }
     It 'setzt das Passwort per CIM und den Programmpfad mit Anfuehrungszeichen' {
         $password = ConvertTo-SecureString 'test-password' -AsPlainText -Force
@@ -203,7 +203,7 @@ Describe 'Windows-Schnittstellen des Installers' {
         }
     }
     It 'verweigert eine fehlgeschlagene Windows-Kontokonfiguration' {
-        Mock Invoke-CimMethod { [pscustomobject]@{ ReturnValue = 22 } }
+        Mock Invoke-CimMethod { [pscustomobject]@{ ReturnValue = 22 } } -RemoveParameterType InputObject
         { Set-AgentServiceAccount 'EinsatzcockpitPrintAgent' 'DOMAIN\svc' $null } | Should -Throw '*Windows-Code 22*'
     }
     It 'uebergibt den Code per stdin und nicht als Argument' {
