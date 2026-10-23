@@ -40,6 +40,7 @@ public sealed class ProtocolConnectionTests : IDisposable
             await Wait(() => cloud.IsConnected);
             await Wait(() => transport.Sent.Count(s => s.Contains("heartbeat")) >= 2);
             Assert.Equal("KDOF1", transport.ConfiguredName);
+            await Wait(() => transport.Sent.Any(s => s.Contains("ping")));
         }
         finally { await cloud.StopAsync(); }
     }

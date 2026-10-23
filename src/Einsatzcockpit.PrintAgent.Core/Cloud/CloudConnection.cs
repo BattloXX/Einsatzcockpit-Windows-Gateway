@@ -198,6 +198,9 @@ public sealed class CloudConnection : ICloudChannel
         {
             await Task.Delay(TimeSpan.FromSeconds(_heartbeatSeconds), cancellationToken);
             await SendMessageAsync("heartbeat", new { }, cancellationToken);
+            // Heartbeats werden nur persistiert. Ping/Pong liefert auch bei pausiertem
+            // Lease-Polling (z.B. Update) einen Empfangsnachweis fuer den Idle-Timeout.
+            await SendMessageAsync("ping", new { }, cancellationToken);
         }
     }
 
