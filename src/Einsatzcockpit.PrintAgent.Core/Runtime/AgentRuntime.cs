@@ -67,7 +67,11 @@ public sealed class AgentRuntime : IAsyncDisposable
             };
             connection.CancelJob += message => _processor.CancelAsync(message.JobId);
             connection.Abandon += message => { _processor.Abandon(message.JobId, message.Reason); return Task.CompletedTask; };
-            connection.Connected += SendHelloAsync;
+            connection.Connected += async () =>
+            {
+                await SendHelloAsync();
+                await SendInventoryAsync(_lifetime?.Token ?? CancellationToken.None);
+            };
         }
     }
 
@@ -88,8 +92,8 @@ public sealed class AgentRuntime : IAsyncDisposable
         else
         {
             await SendHelloAsync();
+            await SendInventoryAsync(_lifetime.Token);
         }
-        await SendInventoryAsync(_lifetime.Token);
         await CleanupAsync();
         _tasks.Add(LoopAsync(PollLeasesAsync, () => Seconds(_config?.Intervals.LeasePollS, 15), _lifetime.Token));
         _tasks.Add(LoopAsync(RenewAsync, () => Seconds(_config?.Intervals.RenewS, 20), _lifetime.Token));
@@ -192,9 +196,9 @@ public sealed class AgentRuntime : IAsyncDisposable
         }
 
         var connected = _cloud is CloudConnection connection && connection.IsConnected;
-        if (connected)
+        if (_cloud is CloudConnection activeConnection && connected)
         {
-            _lastConnectedAt = _clock.UtcNow;
+            _lastConnectedAt = activeConnection.LastConnectedAt;
         }
 
         var readiness = _readinessResults.ToDictionary(route => route.RouteId);

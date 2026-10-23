@@ -61,6 +61,9 @@ jobs:
         run: >
           dotnet publish src/Einsatzcockpit.PrintAgent -c Release -r win-x64 --self-contained
           -p:PublishSingleFile=true -p:Version=${{ steps.version.outputs.version }} -o publish
+      - name: Tray ohne Schreibrechte auf Dienstverzeichnis starten
+        shell: pwsh
+        run: ./tests/Tray.Smoke.ps1 -Exe ./publish/EinsatzcockpitPrintAgent.exe
       - name: Paket packen
         shell: pwsh
         run: |
