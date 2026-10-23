@@ -57,7 +57,7 @@ Die Version **2026.10.17-win-x64** enthaelt Fehler im Installer und beim Lesen d
 Pairing-Antwort. Fuer eine Erstinstallation ist ein neueres, korrigiertes ZIP aus
 [Releases](https://github.com/BattloXX/Einsatzcockpit-Windows-Gateway/releases) erforderlich.
 Die folgende Anleitung gilt fuer Pakete mit `Installieren.cmd` und `Install.Common.ps1`.
-Der korrigierte Release ist **2026.10.23**. Bereits heruntergeladene ZIP-Dateien
+Der aktuelle korrigierte Release ist **2026.10.23.1**. Bereits heruntergeladene ZIP-Dateien
 der Version 2026.10.17 werden dadurch nicht repariert; das neue Paket herunterladen.
 
 1. Windows x64, Administratorrechte und ausgehendes HTTPS/WSS zur Cloud ueber Port 443
@@ -224,7 +224,7 @@ Die Projektaufteilung:
 LGPL-2.1, wie das Linux-Gateway.
 
 
-## Verbindung und Tray: weiterer Bugfix nach 2026.10.23
+## Verbindung und Tray: korrigiert ab 2026.10.23.1
 
 Die Cloud sendet Agent- und Job-IDs numerisch. Der Agent konvertiert diese jetzt gezielt
 zwischen JSON-Zahlen und lokalen SQLite-Strings; Tokens und Spool-Referenzen bleiben Strings.
@@ -234,11 +234,11 @@ Hello und Inventar erneut. Erst ein gueltiges config_sync bestaetigt die lokale 
 Das Tray-Symbol startet ohne Schreibversuch auf geschuetzte ProgramData-Dienstverzeichnisse.
 Es bleibt eine Anwendung der angemeldeten Windows-Sitzung; LocalSystem und Session 0
 sind kein Desktop fuer ein sichtbares Tray-Symbol. HKLM-Run startet es bei Anmeldung.
-Nach Installation des neuen Bugfix-Releases einmal ab-/anmelden oder als normaler Benutzer
+Nach Installation von 2026.10.23.1 einmal ab-/anmelden oder als normaler Benutzer
 `"C:\Program Files\Einsatzcockpit\PrintAgent\EinsatzcockpitPrintAgent.exe" tray` starten
 (in PowerShell vor dem zitierten Programmpfad `&` verwenden). Den Dienst nicht auf ein
 Benutzerkonto umstellen. Im Windows-Menue fuer ausgeblendete Taskleistensymbole nachsehen.
 
 Cloud-Deployment mit Migration 0306 und neu gestarteten Workern ist fuer die gemeinsame
-Presence und Diagnose erforderlich. Der Release 2026.10.23 enthaelt diesen weiteren Bugfix
-noch nicht. Details und Abnahme: Cloud-Dokumentation `docs/print-agent-architektur.md`.
+Presence und Diagnose erforderlich. Dieser Agent-Release enthaelt den Protokoll-,
+Reconnect- und Tray-Bugfix; der bisherige Release 2026.10.23 enthaelt ihn noch nicht. Details und Abnahme: Cloud-Dokumentation `docs/print-agent-architektur.md`.
