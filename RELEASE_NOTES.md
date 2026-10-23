@@ -1,20 +1,22 @@
-## Neu in dieser Version
-- **Tray-Symbol** für jeden angemeldeten Benutzer, startet automatisch:
-  - Ampelfarbe grün, gelb oder rot für Verbindung und Bereitschaft, mit Hinweisen bei Verbindungsverlust, unklaren Aufträgen und Updates
-  - **Statusfenster** mit Druckzielen, Aufträgen und Update-Stand
-  - **Protokoll** mit Filter (Warnungen/Fehler), Suche und automatischem Mitlaufen
-  - **Hilfe** zu Kopplung, Druckereinrichtung, Redundanz, „Unklar – bitte prüfen“, Updates und Fehlersuche
-- **Automatische Updates** aus GitHub-Releases:
-  - Prüfung alle 6 Stunden oder auf Knopfdruck im Tray, mit SHA256-Prüfung
-  - während eines Updates nimmt der Agent keine Aufträge an, ein redundanter PC übernimmt
-  - Installation nur ohne laufende Druckübergabe
-  - Gesundheitscheck nach dem Neustart, bei Fehlschlag automatischer Rollback; die Version wird dann gesperrt
-  - in `agent.json` abschaltbar mit `"auto_update": false`
+## Windows-Druckagent: Installation und Pairing korrigiert
 
-**Hinweis:** Auf PCs mit Version 2026.10.16 dieses Paket einmal mit `install.ps1` installieren. Erst ab dieser Version aktualisiert sich der Agent selbst.
+- PowerShell-Parameter eindeutig benannt: `-PairingCode`, Alias `-Code`;
+  Positionsargumente koennen niemals als `ServicePassword` gebunden werden.
+- `Installieren.cmd` als Administrator starten und Code verdeckt eingeben.
+- Pairing-Antwort der ECP-Cloud (`device_token`, numerische `gateway_id`) korrekt lesen.
+- Code nicht in Kindprozessargumenten, Windows-Passwort nur bei ausdruecklichem Dienstkonto.
+- Voraussetzungen und Windows-Dienstbefehle pruefen; frische Cloud-Verbindung nach Start abwarten.
+- Updates und Neuinstallation erhalten Konfiguration, Token, Auftraege und vorhandenes Dienstkonto.
+- Bestehende Druckprotokolle, Lease/Intent, Autostart und automatische Updates bleiben erhalten.
 
-Installation: ZIP entpacken und PowerShell **als Administrator** starten:
+Dieses neue Paket ersetzt das fehlerhafte `2026.10.17-win-x64` fuer Erstinstallationen.
+Bereits verbundene Agents muessen nicht neu gekoppelt werden.
+
+ZIP vollstaendig entpacken und `Installieren.cmd` per Rechtsklick als Administrator starten.
+Alternativ in Administrator-PowerShell:
 
 ```powershell
-.\install.ps1 -CloudUrl https://<einsatzcockpit> -PairingCode <CODE>
+.\install.ps1 -CloudUrl "https://einsatzcockpit.com" -PairingCode "<PAIRING-CODE>"
 ```
+
+Ohne `-PairingCode` erfolgt eine verdeckte Abfrage. Nur einen Bindestrich verwenden.

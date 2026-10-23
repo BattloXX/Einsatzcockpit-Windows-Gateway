@@ -53,31 +53,111 @@ Spezifikation (Protokoll, Lease, Zustandsmaschine, Migration):
 
 ## Installation
 
-1. In Einsatzcockpit unter **Gateway / Druck → + Gateway anlegen** den Typ *Windows-Druckagent*
-   wählen (je PC ein Eintrag) und einen **Pairing-Code erzeugen**.
-2. Den Netzwerkdrucker auf dem PC als **lokale Warteschlange mit TCP/IP-Anschluss** einrichten,
-   nicht als Benutzer-Verbindung `\\server\drucker`. Nur so ist er für den Dienst ohne
-   Anmeldung sichtbar.
-3. ZIP aus den Releases entpacken und PowerShell **als Administrator** öffnen:
+Die Version **2026.10.17-win-x64** enthaelt Fehler im Installer und beim Lesen der
+Pairing-Antwort. Fuer eine Erstinstallation ist ein neueres, korrigiertes ZIP aus
+[Releases](https://github.com/BattloXX/Einsatzcockpit-Windows-Gateway/releases) erforderlich.
+Die folgende Anleitung gilt fuer Pakete mit `Installieren.cmd` und `Install.Common.ps1`.
+Der korrigierte Release ist **2026.10.23**. Bereits heruntergeladene ZIP-Dateien
+der Version 2026.10.17 werden dadurch nicht repariert; das neue Paket herunterladen.
+
+1. Windows x64, Administratorrechte und ausgehendes HTTPS/WSS zur Cloud ueber Port 443
+   bereitstellen. .NET ist im Paket enthalten. Fuer HTML-/Kartendruck muss Microsoft Edge
+   installiert sein. Netzwerkdrucker als **lokale TCP/IP-Warteschlange** einrichten und
+   mit einer Windows-Testseite pruefen.
+2. Das Windows-x64-ZIP vollstaendig in einen lokalen Ordner entpacken. Es muss neben der
+   EXE auch `install.ps1`, `Install.Common.ps1`, `Installieren.cmd` und `update.ps1` enthalten.
+3. In Einsatzcockpit unter **Gateway / Druck → + Gateway anlegen** den Typ
+   **Windows-Druckagent** waehlen (je PC ein Eintrag), dann **Pairing-Code erzeugen**.
+   Der Code gilt zehn Minuten und kann nur einmal verwendet werden.
+4. Fuer `https://einsatzcockpit.com`: Rechtsklick auf **Installieren.cmd → Als Administrator
+   ausfuehren**. Den Code eingeben; die Eingabe bleibt verdeckt. Alternativ PowerShell
+   **als Administrator** im entpackten Ordner oeffnen:
 
    ```powershell
-   .\install.ps1 -CloudUrl https://einsatzcockpit.example.at -PairingCode ABCD1234
+   .\install.ps1 -CloudUrl "https://einsatzcockpit.com" -PairingCode "<PAIRING-CODE>"
    ```
 
-   Der Dienst `EinsatzcockpitPrintAgent` startet automatisch (verzögert, nach dem Spooler) und
-   ohne Benutzeranmeldung. Nach einem Absturz startet er nach 10, 30 bzw. 60 Sekunden neu.
-4. In Einsatzcockpit erscheint das Inventar des PCs. Die Warteschlange einem Druckziel zuordnen,
-   z. B. *Kommandofunk*: PC A mit Priorität 10, PC B mit Priorität 20 auf **dasselbe** Druckziel.
-5. Druckregeln und Druckdialoge verwenden das Druckziel wie jeden anderen Drucker.
+   Bei anderer Cloud-Adresse die URL ersetzen. Ohne `-PairingCode` wird der Code verdeckt
+   abgefragt. Das vermeidet einen Code im PowerShell-Befehlsverlauf:
 
-Updates werden standardmäßig automatisch geprüft (zwei Minuten nach Start, danach alle sechs
-Stunden). Ein angemeldeter Benutzer darf die lesbare `status.json` und `logs\` ansehen sowie
-`requests\update-request` für eine sofortige Prüfung anlegen; `token.bin` und `agent.db`
-bleiben ausschließlich für den Dienst zugänglich.
-Deinstallation: `install.ps1 -Uninstall`. Daten und Token bleiben dabei erhalten.
+   ```powershell
+   .\install.ps1 -CloudUrl "https://einsatzcockpit.com"
+   ```
 
-Für Druckerfreigaben eines Druckservers kann der Dienst unter einem eigenen Konto laufen:
-`install.ps1 -ServiceAccount DOMAIN\svc-druck`.
+   **Ein** Bindestrich vor PowerShell-Parametern; `-Code` ist ein Alias fuer `-PairingCode`.
+   Positionsargumente und `--PairingCode`/`--code` werden abgewiesen, bevor etwas geaendert wird.
+   Die EXE hat eine eigene CLI: deren `pair --url ... --code ...` ist kein Installer-Aufruf.
+5. Die vier Installationsschritte abwarten. Erfolg wird erst gemeldet, wenn der Dienst
+   laeuft und eine **frische** Statusdatei seine Cloud-Verbindung bestaetigt (bis zu 60 s).
+   In Einsatzcockpit die Seite neu laden: Agent **Online**, Inventar sichtbar.
+6. Die Warteschlange einem Druckziel zuordnen, dann am Druckziel **Testseite** drucken
+   und den Ausdruck kontrollieren. Fuer Redundanz PC A mit Prioritaet 10 und PC B mit
+   Prioritaet 20 demselben Druckziel zuordnen.
+
+Der Dienst `EinsatzcockpitPrintAgent` laeuft standardmaessig als **LocalSystem**, ohne
+Windows-Passwort und ohne Benutzeranmeldung. Autostart ist verzoegert, abhaengig vom Spooler.
+Nach Absturz erfolgt ein Neustart nach 10, 30 bzw. 60 Sekunden.
+
+### Updates, Deinstallation und Dienstkonten
+
+Ein manuelles Update mit dem neuen entpackten ZIP als Administrator ausfuehren:
+
+```powershell
+.\install.ps1
+```
+
+Wenn bereits gekoppelt, werden Cloud-Adresse, Token, Auftragsdaten und Dienstkonto
+beibehalten; kein neuer Code und kein Windows-Passwort erforderlich. Nicht mitten in einer
+Druckuebergabe aktualisieren; unklare Auftraege anschliessend in der Druckhistorie pruefen.
+Das bestehende automatische Update mit SHA256-Pruefung, Update-Sperre bei laufenden
+Druckuebergaben und Gesundheitspruefung bleibt erhalten.
+
+Deinstallation im entpackten ZIP oder im Installationsordner:
+
+```powershell
+.\install.ps1 -Uninstall
+```
+
+Daten, Konfiguration und DPAPI-geschuetztes Token unter
+`%ProgramData%\Einsatzcockpit\PrintAgent` bleiben erhalten. Erneute Installation auf
+**demselben Windows-PC** verwendet sie weiter. Zum endgueltigen Entkoppeln zuerst den
+Dienst stoppen und das Token in Einsatzcockpit widerrufen. Ein Token laesst sich wegen
+DPAPI nicht auf einen anderen PC uebertragen.
+
+Nur fuer Druckserver-Freigaben oder besondere Netzwerkberechtigungen ein eigenes Konto
+angeben (Recht **Als Dienst anmelden** muss vorhanden sein):
+
+```powershell
+.\install.ps1 -ServiceAccount 'DOMAIN\svc-druck'
+# Passwort wird als SecureString abgefragt, getrennt vom Pairing-Code.
+# Fuer unbeaufsichtigte Installation: -NonInteractive und ein bereits vorhandenes
+# SecureString mit -ServicePassword uebergeben; Passwort nie im Klartext-Befehl speichern.
+```
+
+Das Installer-Skript gibt dem ausgewaehlten Dienstkonto Zugriff auf Daten und Token.
+Das DPAPI-Token bleibt auf SYSTEM, Administratoren und dieses Konto beschraenkt.
+Die CLI `pair` direkt als Administrator setzt die Token-ACL wieder auf SYSTEM und
+Administratoren; bei eigenem Dienstkonto deshalb immer ueber den Installer koppeln.
+Ein angemeldeter Benutzer kann `status.json` und `logs\` lesen sowie ueber
+`requests\update-request` eine Updatepruefung anfordern.
+
+### Fehlerbehebung
+
+| Meldung / Symptom | Loesung |
+|---|---|
+| `NamedParameterNotFound` / `ServicePassword`-Konvertierung | Korrigiertes ZIP verwenden; PowerShell-Parameter mit einem Bindestrich, z. B. `-PairingCode`, niemals positionsbasiert uebergeben. |
+| Administratorrechte fehlen | Installieren.cmd per Rechtsklick als Administrator starten oder Administrator-PowerShell verwenden. |
+| Skriptausfuehrung blockiert | In Administrator-PowerShell: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File .\install.ps1 -CloudUrl "https://einsatzcockpit.com"`. Dies gilt nur fuer diesen Prozess; Organisationsrichtlinien gelten weiter. |
+| Pairing-Code fehlt / ungueltig / abgelaufen / verwendet | Neuen Code in Einsatzcockpit erzeugen. Kein Windows-Passwort eingeben. Fuer unbeaufsichtigte Aufrufe `-NonInteractive -PairingCode ...` verwenden. |
+| Dienst installiert, Cloud nicht bestaetigt | Tray-Status, Internet, Cloud-URL, ausgehendes HTTPS/WSS 443 und Proxy in agent.json pruefen. Erneut ohne Code installieren, wenn bereits gekoppelt. Ein laufender Dienst allein bedeutet noch keine Cloud-Verbindung. |
+| Dienstkonto kann nicht starten | Passwort, Recht „Als Dienst anmelden“ und Druckerberechtigungen pruefen; Standard LocalSystem braucht kein Passwort. |
+| Kein Inventar / keine Drucker | Lokale TCP/IP-Queue statt benutzergebundener Freigabe einrichten; Spooler pruefen. |
+| Dienst zum Loeschen vorgemerkt | Dienste-Fenster schliessen, ggf. Windows neu starten, dann erneut installieren. |
+| HTML-/Kartendruck scheitert | Microsoft Edge installieren oder edge_path in agent.json setzen; PDF-Testseite getrennt pruefen. |
+
+Pairing-Codes und Zugangsdaten nicht in Support-Logs oder Screenshots weitergeben.
+Der Installer erstellt kein Transkript; Codeuebergabe an die EXE erfolgt ueber stdin,
+Dienstpasswoerter werden ueber die Windows-Verwaltungsschnittstelle gesetzt.
 
 ## Befehle
 

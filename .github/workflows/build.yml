@@ -20,8 +20,15 @@ jobs:
           dotnet-version: "10.0.x"
       - run: dotnet build Einsatzcockpit.PrintAgent.slnx -c Release
       - run: dotnet test tests/Einsatzcockpit.PrintAgent.Tests -c Release --no-build
+      - name: Installer-Tests (PowerShell)
+        shell: pwsh
+        run: |
+          Install-Module Pester -RequiredVersion 5.7.1 -Force -Scope CurrentUser
+          Import-Module Pester -RequiredVersion 5.7.1
+          Invoke-Pester tests/Installer.Tests.ps1 -CI
 
   windows:
+    needs: test-linux
     name: Build + Tests (Windows) und Paket
     runs-on: windows-latest
     steps:
@@ -39,6 +46,17 @@ jobs:
           else { $v = "$(Get-Date -Format yyyy.MM.dd).$env:GITHUB_RUN_NUMBER" }
           "version=$v" >> $env:GITHUB_OUTPUT
       - run: dotnet test tests/Einsatzcockpit.PrintAgent.Tests -c Release
+      - name: Installer-Tests (Windows PowerShell 5.1 und PowerShell 7)
+        shell: powershell
+        run: |
+          [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+          Install-PackageProvider NuGet -Force -Scope CurrentUser | Out-Null
+          Install-Module Pester -RequiredVersion 5.7.1 -Force -Scope CurrentUser -SkipPublisherCheck
+          Import-Module Pester -RequiredVersion 5.7.1
+          Invoke-Pester tests/Installer.Tests.ps1 -CI
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          pwsh -NoProfile -Command "Import-Module Pester -RequiredVersion 5.7.1; Invoke-Pester tests/Installer.Tests.ps1 -CI"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Publish (win-x64, self-contained, Single-File)
         run: >
           dotnet publish src/Einsatzcockpit.PrintAgent -c Release -r win-x64 --self-contained
@@ -46,10 +64,12 @@ jobs:
       - name: Paket packen
         shell: pwsh
         run: |
-          Copy-Item installer/install.ps1 publish/
-          Copy-Item installer/update.ps1 publish/
+          Copy-Item installer/* publish/
           Copy-Item README.md publish/
           Copy-Item LICENSE publish/
+          foreach ($name in @('EinsatzcockpitPrintAgent.exe','install.ps1','Install.Common.ps1','Installieren.cmd','update.ps1','README.md')) {
+            if (-not (Test-Path "publish/$name")) { throw "Paket unvollstaendig: $name fehlt" }
+          }
           Compress-Archive -Path publish/* -DestinationPath EinsatzcockpitPrintAgent-${{ steps.version.outputs.version }}-win-x64.zip
           $zip = Get-ChildItem EinsatzcockpitPrintAgent-*-win-x64.zip | Select-Object -First 1
           $hash = (Get-FileHash $zip -Algorithm SHA256).Hash.ToLowerInvariant()
