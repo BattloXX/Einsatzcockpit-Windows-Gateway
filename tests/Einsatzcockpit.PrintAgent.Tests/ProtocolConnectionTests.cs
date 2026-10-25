@@ -27,6 +27,15 @@ public sealed class ProtocolConnectionTests : IDisposable
         Assert.Equal("123", JsonSerializer.Deserialize<JobAvailableMessage>("""{"job_ids":[123]}""", ProtocolJson.Options)!.JobIds.Single());
         Assert.Equal(JsonValueKind.Number, ProtocolJson.Element(new LeaseReference("123", "t")).GetProperty("job_id").ValueKind);
         Assert.Equal(JsonValueKind.Number, ProtocolJson.Element(new OpenJob("123", "t", "spooled")).GetProperty("job_id").ValueKind);
+        Assert.Equal("123", JsonSerializer.Deserialize<CancelJobMessage>("""{"job_id":123}""", ProtocolJson.Options)!.JobId);
+        Assert.Equal("123", JsonSerializer.Deserialize<AbandonMessage>("""{"job_id":123,"reason":"invalid_lease"}""", ProtocolJson.Options)!.JobId);
+        var fullConfig = JsonSerializer.Deserialize<Envelope>(File.ReadAllText(Path.Combine(AppContext.BaseDirectory,
+            "Fixtures", "cloud-2026-10-25-config-sync.json")), ProtocolJson.Options)!.Payload.Deserialize<ConfigSync>(ProtocolJson.Options)!;
+        Assert.Equal("2", fullConfig.AgentId);
+        Assert.Equal(new AgentIntervals(30, 30, 15, 20), fullConfig.Intervals);
+        Assert.Equal(4, fullConfig.Routes.Single().RouteId);
+        Assert.Equal(5, fullConfig.Routes.Single().PrinterId);
+        Assert.Equal(JsonValueKind.Object, fullConfig.Routes.Single().Options!.Value.ValueKind);
     }
 
     [Fact]
@@ -75,6 +84,47 @@ public sealed class ProtocolConnectionTests : IDisposable
         finally { await cloud.StopAsync(); }
     }
 
+    [Fact]
+    public async Task IntentUsesNumericJobIdAndCorrelatesCloudReply()
+    {
+        var transport = new Transport();
+        var cloud = Connection(transport);
+        await cloud.StartAsync();
+        try
+        {
+            await Wait(() => cloud.IsConnected);
+            var result = await cloud.SendIntentAsync("123", "000123");
+            Assert.True(result.Ok, result.Reason);
+            Assert.Equal("123", result.JobId);
+            var sent = transport.Sent.Select(raw => JsonSerializer.Deserialize<Envelope>(raw, ProtocolJson.Options)!)
+                .Single(message => message.Type == "print_intent");
+            Assert.Equal(JsonValueKind.Number, sent.Payload.GetProperty("job_id").ValueKind);
+            Assert.Equal("000123", sent.Payload.GetProperty("lease_token").GetString());
+        }
+        finally { await cloud.StopAsync(); }
+    }
+
+    [Fact]
+    public async Task UnacknowledgedStatusIsRetriedWhileSocketStaysConnected()
+    {
+        var transport = new Transport();
+        var store = new JobStore(_path);
+        var cloud = Connection(transport);
+        await cloud.StartAsync();
+        try
+        {
+            await Wait(() => cloud.IsConnected);
+            var status = new JobStatusMessage("123", "000123", "done", "spooled", "win:12");
+            var id = store.AddOutbox("job_status", JsonSerializer.Serialize(status, ProtocolJson.Options), DateTimeOffset.UtcNow);
+            await cloud.EnqueueStatusAsync(status);
+            await Wait(() => store.PendingOutbox().Single().Attempts >= 2);
+            transport.Input.Writer.TryWrite(JsonSerializer.Serialize(new Envelope("ack", Payload: ProtocolJson.Element(new AckMessage(id))), ProtocolJson.Options));
+            await Wait(() => store.PendingOutbox().Count == 0);
+            Assert.Equal(1, transport.Connections);
+        }
+        finally { await cloud.StopAsync(); }
+    }
+
     private CloudConnection Connection(Transport transport)
     {
         var cloud = new CloudConnection(transport, new Uri("wss://example.test/ws/print-agent"), "test-token", new JobStore(_path));
@@ -103,6 +153,14 @@ public sealed class ProtocolConnectionTests : IDisposable
         {
             Sent.Enqueue(message);
             if (message.Contains("hello")) Input.Writer.TryWrite(FailFirstConfig && Connections == 1 ? "{bad-json}" : Config);
+            var envelope = JsonSerializer.Deserialize<Envelope>(message, ProtocolJson.Options)!;
+            if (envelope.Type == "print_intent")
+            {
+                // Cloud ws.py akzeptiert numerische IDs; rid wird unverändert zurückgegeben.
+                var numeric = envelope.Payload.GetProperty("job_id").ValueKind == JsonValueKind.Number;
+                Input.Writer.TryWrite(JsonSerializer.Serialize(new Envelope("intent_result", Rid: envelope.Rid,
+                    Payload: ProtocolJson.Element(new IntentResult("123", numeric, numeric ? null : "unknown"))), ProtocolJson.Options));
+            }
             return Task.CompletedTask;
         }
         public async Task<string?> ReceiveAsync(CancellationToken cancellationToken)

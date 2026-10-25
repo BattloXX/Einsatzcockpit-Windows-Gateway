@@ -1,0 +1,36 @@
+{
+  "type": "lease_grant",
+  "rid": "lease-1",
+  "payload": {
+    "jobs": [
+      {
+        "job_id": 123,
+        "lease_token": "000123",
+        "lease_generation": 2,
+        "lease_expires_in": 60,
+        "document_type": "dokumentpaket",
+        "artifact_url": "https://cloud.example/api/v1/print/artifacts/123?sig=contract-test-signature",
+        "render_kind": "pdf",
+        "options": {
+          "copies": 2,
+          "duplex": "long",
+          "color": "monochrome",
+          "media": "A3"
+        },
+        "route": {
+          "route_id": 4,
+          "printer_id": 5,
+          "local_queue": "Kyocera Kommandofunk",
+          "render_mode": "driver",
+          "options": {
+            "orientation": "auto",
+            "scaling": "fit",
+            "dpi": 300,
+            "tray": "Kassette 1",
+            "collate": true
+          }
+        }
+      }
+    ]
+  }
+}

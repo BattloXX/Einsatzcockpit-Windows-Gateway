@@ -32,33 +32,75 @@ public sealed class RuntimeTests : IDisposable
         Assert.Contains(store.PendingOutbox(), item => item.PayloadJson.Contains("uncertain"));
     }
 
-    [Fact]
-    public async Task Job_available_loest_lease_request_aus_und_grant_wird_gespoolt()
+    [Theory]
+    [InlineData("driver")]
+    [InlineData("pdf_direct")]
+    public async Task CloudDocumentPackageGrantReachesSubmitterAfterNumericIntent(string renderMode)
     {
         var transport = new QueueTransport();
         var store = new JobStore(_path);
         var connection = new CloudConnection(transport, new Uri("wss://example.test/ws"), "token", store, new FixedClock(_now));
-        await using var runtime = Runtime(store, connection);
+        var submitter = new GoodSubmitter();
+        await using var runtime = Runtime(store, connection, submitter: submitter);
         await runtime.StartAsync();
         await WaitUntilAsync(() => transport.Sent.Any(IsHello));
 
-        await transport.EnqueueAsync(new Envelope("job_available", Payload: ProtocolJson.Element(new JobAvailableMessage(["j1"]))));
+        await transport.EnqueueAsync(JsonSerializer.Deserialize<Envelope>("""{"type":"job_available","payload":{"job_ids":[123]}}""", ProtocolJson.Options)!);
         await WaitUntilAsync(() => transport.Sent.Any(message => TypeOf(message) == "lease_request"));
         var request = transport.Sent.Last(message => TypeOf(message) == "lease_request");
         var rid = JsonSerializer.Deserialize<Envelope>(request, ProtocolJson.Options)!.Rid;
-        var grant = Grant("j1");
-        Assert.Equal("j1", JsonSerializer.Deserialize<LeaseGrantMessage>(
-            ProtocolJson.Element(new LeaseGrantMessage([grant])), ProtocolJson.Options)!.Jobs.Single().JobId);
+        // Direkt aus Cloud _grant (Stand 2026-10-25); nur Test-Token/URL ersetzt.
+        var fixture = JsonSerializer.Deserialize<Envelope>(await File.ReadAllTextAsync(
+            Path.Combine(AppContext.BaseDirectory, "Fixtures", "cloud-2026-10-25-lease-grant.json")), ProtocolJson.Options)!;
+        var original = fixture.Payload.Deserialize<LeaseGrantMessage>(ProtocolJson.Options)!.Jobs.Single();
+        var grant = original with { Route = original.Route with { RenderMode = renderMode } };
+        Assert.Equal("123", grant.JobId);
         await transport.EnqueueAsync(new Envelope("lease_grant", Rid: rid,
             Payload: ProtocolJson.Element(new LeaseGrantMessage([grant]))));
         await WaitUntilAsync(() => transport.Sent.Any(message => TypeOf(message) == "print_intent"));
         var intent = transport.Sent.Last(message => TypeOf(message) == "print_intent");
-        var intentRid = JsonSerializer.Deserialize<Envelope>(intent, ProtocolJson.Options)!.Rid;
+        var intentEnvelope = JsonSerializer.Deserialize<Envelope>(intent, ProtocolJson.Options)!;
+        Assert.Equal(123, intentEnvelope.Payload.GetProperty("job_id").GetInt64());
+        var intentRid = intentEnvelope.Rid;
         await transport.EnqueueAsync(new Envelope("intent_result", Rid: intentRid,
-            Payload: ProtocolJson.Element(new IntentResult("j1", true))));
+            Payload: JsonSerializer.Deserialize<JsonElement>("""{"job_id":123,"ok":true,"reason":null}""")));
 
-        await WaitUntilAsync(() => store.Get("j1")?.State == JobStates.Spooled);
-        Assert.Equal(JobStates.Spooled, store.Get("j1")!.State);
+        await WaitUntilAsync(() => store.Get("123")?.State == JobStates.Spooled);
+        Assert.Equal(new PrintOptions(2, "long", "monochrome", "A3"), submitter.LastRequest!.Options);
+        var options = submitter.LastRequest.Route.Options!.Value;
+        Assert.Equal("auto", options.GetProperty("orientation").GetString());
+        Assert.Equal("fit", options.GetProperty("scaling").GetString());
+        Assert.True(options.GetProperty("collate").GetBoolean());
+        await WaitUntilAsync(() => transport.Sent.Any(raw => TypeOf(raw) == "job_status"));
+        var status = transport.Sent.Select(raw => JsonSerializer.Deserialize<Envelope>(raw, ProtocolJson.Options)!)
+            .First(message => message.Type == "job_status");
+        Assert.Equal(123, status.Payload.GetProperty("job_id").GetInt64());
+        Assert.Equal("spooled", status.Payload.GetProperty("phase").GetString());
+    }
+
+    [Fact]
+    public async Task QueuedGrantsArePersistedAndRenewedWhilePreviousPdfIsStillFetching()
+    {
+        var store = new JobStore(_path);
+        var cloud = new TestCloud { Grants = [Grant("1"), Grant("2"), Grant("3")] };
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var fetcher = new TestFetcher { WaitFor = release.Task };
+        await using var runtime = Runtime(store, cloud, fetcher: fetcher);
+        await runtime.ApplyConfigAsync(new ConfigSync("2", "PC", [], new AgentIntervals(30, 30, 15, 1)));
+        await runtime.StartAsync();
+        try
+        {
+            await runtime.PollLeasesAsync(default);
+            Assert.Equal(JobStates.Fetching, store.Get("1")!.State);
+            Assert.Equal(JobStates.Granted, store.Get("2")!.State);
+            Assert.Equal(JobStates.Granted, store.Get("3")!.State);
+            await WaitUntilAsync(() => cloud.Renewals.Any(leases => leases.Count == 3));
+        }
+        finally
+        {
+            release.TrySetResult();
+            await WaitUntilAsync(() => store.GetByState(JobStates.Spooled).Count == 3);
+        }
     }
 
     [Fact]
@@ -155,9 +197,10 @@ public sealed class RuntimeTests : IDisposable
         Assert.Equal(0, cloud.LeaseRequests);
     }
 
-    private AgentRuntime Runtime(JobStore store, ICloudChannel cloud, IUpdateGate? updateGate = null) => new(store,
+    private AgentRuntime Runtime(JobStore store, ICloudChannel cloud, IUpdateGate? updateGate = null,
+        GoodSubmitter? submitter = null, TestFetcher? fetcher = null) => new(store,
         new RecoveryService(store, new TestSpooler(), new FixedClock(_now)),
-        Processor(store, cloud), cloud, new TestReadiness(), new TestInventory(), "1.0", new HostInfo("h", "os", "m"),
+        Processor(store, cloud, fetcher: fetcher, submitter: submitter), cloud, new TestReadiness(), new TestInventory(), "1.0", new HostInfo("h", "os", "m"),
         new FixedClock(_now), updateGate: updateGate);
     private JobProcessor Processor(JobStore store, ICloudChannel cloud, TestFetcher? fetcher = null, IPrintSubmitter? submitter = null, TestSpooler? spooler = null) =>
         new(store, cloud, fetcher ?? new TestFetcher(), submitter ?? new GoodSubmitter(), spooler ?? new TestSpooler(), new FixedClock(_now));
@@ -181,15 +224,19 @@ public sealed class RuntimeTests : IDisposable
     private sealed class TestCloud : ICloudChannel
     {
         public int LeaseRequests { get; private set; }
+        public LeaseGrant[] Grants { get; set; } = [];
+        public ConcurrentQueue<IReadOnlyList<LeaseReference>> Renewals { get; } = new();
         public List<Sent> Messages { get; } = [];
         public Task<LeaseGrant[]> RequestLeasesAsync(int max)
         {
             LeaseRequests++;
-            return Task.FromResult(Array.Empty<LeaseGrant>());
+            var grants = Grants;
+            Grants = [];
+            return Task.FromResult(grants);
         }
         public Task<IntentResult> SendIntentAsync(string jobId, string token) => Task.FromResult(new IntentResult(jobId, true));
         public Task EnqueueStatusAsync(JobStatusMessage status) => Task.CompletedTask;
-        public Task RenewAsync(IReadOnlyList<LeaseReference> leases) => Task.CompletedTask;
+        public Task RenewAsync(IReadOnlyList<LeaseReference> leases) { Renewals.Enqueue(leases); return Task.CompletedTask; }
         public Task SendMessageAsync(string type, object payload, CancellationToken cancellationToken = default) { Messages.Add(new(type, payload)); return Task.CompletedTask; }
     }
     private sealed class TestUpdateGate(bool isUpdatePending) : IUpdateGate
@@ -197,8 +244,27 @@ public sealed class RuntimeTests : IDisposable
         public bool IsUpdatePending => isUpdatePending;
     }
     private sealed class FixedClock(DateTimeOffset now) : IClock { public DateTimeOffset UtcNow => now; }
-    private sealed class TestFetcher : IArtifactFetcher { public Exception? Error { get; set; } public Task<string> FetchAsync(LeaseGrant grant, CancellationToken cancellationToken) => Error is null ? Task.FromResult("x.pdf") : Task.FromException<string>(Error); }
-    private sealed class GoodSubmitter : IPrintSubmitter { public string Name => "test"; public Task<SubmitResult> SubmitAsync(PrintRequest request, CancellationToken cancellationToken) => Task.FromResult(new SubmitResult("42")); }
+    private sealed class TestFetcher : IArtifactFetcher
+    {
+        public Exception? Error { get; set; }
+        public Task? WaitFor { get; init; }
+        public async Task<string> FetchAsync(LeaseGrant grant, CancellationToken cancellationToken)
+        {
+            if (WaitFor is not null) await WaitFor.WaitAsync(cancellationToken);
+            if (Error is not null) throw Error;
+            return "x.pdf";
+        }
+    }
+    private sealed class GoodSubmitter : IPrintSubmitter
+    {
+        public string Name => "test";
+        public PrintRequest? LastRequest { get; private set; }
+        public Task<SubmitResult> SubmitAsync(PrintRequest request, CancellationToken cancellationToken)
+        {
+            LastRequest = request;
+            return Task.FromResult(new SubmitResult("42"));
+        }
+    }
     private sealed class ThrowingSubmitter(Exception error) : IPrintSubmitter { public int Calls { get; private set; } public string Name => "test"; public Task<SubmitResult> SubmitAsync(PrintRequest request, CancellationToken cancellationToken) { Calls++; return Task.FromException<SubmitResult>(error); } }
     private sealed class BlockingSubmitter : IPrintSubmitter { public TaskCompletionSource<bool> Started { get; } = new(); public TaskCompletionSource<SubmitResult> Release { get; } = new(); public string Name => "test"; public Task<SubmitResult> SubmitAsync(PrintRequest request, CancellationToken cancellationToken) { Started.SetResult(true); return Release.Task; } }
     private sealed class TestSpooler : IPrintSpooler { public int CancelCalls { get; private set; } public Task<SpoolJobInfo?> FindJobByDocumentNameAsync(string queue, string documentName, CancellationToken cancellationToken) => Task.FromResult<SpoolJobInfo?>(null); public Task<SpoolJobState> GetJobStateAsync(string queue, string spoolRef, CancellationToken cancellationToken) => Task.FromResult(SpoolJobState.InQueue); public Task CancelJobAsync(string queue, string spoolRef, CancellationToken cancellationToken) { CancelCalls++; return Task.CompletedTask; } }

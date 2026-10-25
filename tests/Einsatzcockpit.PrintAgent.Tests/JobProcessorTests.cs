@@ -83,6 +83,44 @@ public sealed class JobProcessorTests : IDisposable
         reopened.RemoveOutbox(pending[0].Id); Assert.Equal(pending.Count - 1, reopened.PendingOutbox().Count);
     }
 
+    [Theory]
+    [InlineData(false, false)]
+    [InlineData(true, false)]
+    [InlineData(true, true)]
+    public async Task CompletingOldDownloadCannotReviveAbandonedJobOrOverwriteNewLease(bool regrant, bool failOldFetch)
+    {
+        var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        var cloud = new FakeCloud();
+        var submitter = new FakeSubmitter();
+        var fetcher = new FakeFetcher { Fetch = async grant =>
+        {
+            if (grant.LeaseGeneration == 1)
+            {
+                await release.Task;
+                if (failOldFetch) throw new IOException("alter Download fehlgeschlagen");
+            }
+            return "x.pdf";
+        }};
+        var processor = Create(cloud, fetcher: fetcher, submitter: submitter);
+        var old = processor.HandleGrantAsync(Grant("123"));
+        processor.Abandon("123", "invalid_lease");
+        var next = regrant ? processor.HandleGrantAsync(Grant("123", "new", 2)) : Task.CompletedTask;
+        try
+        {
+            var stored = new JobStore(_path).Get("123")!;
+            Assert.Equal(regrant ? "new" : "t", stored.LeaseToken);
+            Assert.Equal(regrant ? JobStates.Granted : JobStates.Abandoned, stored.State);
+        }
+        finally
+        {
+            release.TrySetResult();
+            await Task.WhenAll(old, next);
+        }
+        Assert.Equal(regrant ? 1 : 0, submitter.Calls);
+        Assert.Equal(regrant ? JobStates.Spooled : JobStates.Abandoned, new JobStore(_path).Get("123")!.State);
+        Assert.DoesNotContain(cloud.Statuses, status => status.LeaseToken == "t");
+    }
+
     private JobProcessor Create(FakeCloud cloud, JobStore? store = null, FakeFetcher? fetcher = null, FakeSubmitter? submitter = null, FakeSpooler? spooler = null) =>
         new(store ?? new JobStore(_path), cloud, fetcher ?? new FakeFetcher(), submitter ?? new FakeSubmitter(), spooler ?? new FakeSpooler(), new FakeClock());
     private static LeaseGrant Grant(string id, string token = "t", int generation = 1) => new(id, token, generation, 60, "alarm", "https://example.test/a.pdf", "pdf", new(), new(1, 2, "Q", "driver"));
@@ -97,7 +135,13 @@ public sealed class JobProcessorTests : IDisposable
         public Task EnqueueStatusAsync(JobStatusMessage status) { Statuses.Add(status); return Task.CompletedTask; }
         public Task RenewAsync(IReadOnlyList<LeaseReference> leases) => Task.CompletedTask;
     }
-    private sealed class FakeFetcher : IArtifactFetcher { public Exception? Error { get; init; } public Task<string> FetchAsync(LeaseGrant g, CancellationToken c) => Error is null ? Task.FromResult("x.pdf") : Task.FromException<string>(Error); }
+    private sealed class FakeFetcher : IArtifactFetcher
+    {
+        public Exception? Error { get; init; }
+        public Func<LeaseGrant, Task<string>>? Fetch { get; init; }
+        public Task<string> FetchAsync(LeaseGrant g, CancellationToken c) =>
+            Fetch is not null ? Fetch(g) : Error is null ? Task.FromResult("x.pdf") : Task.FromException<string>(Error);
+    }
     private sealed class FakeSubmitter : IPrintSubmitter { public string Name => "driver"; public int Calls { get; private set; } public Action? BeforeSubmit { get; init; } public Task<SubmitResult> SubmitAsync(PrintRequest r, CancellationToken c) { Calls++; BeforeSubmit?.Invoke(); return Task.FromResult(new SubmitResult("7")); } }
     private sealed class FakeSpooler : IPrintSpooler { public SpoolJobInfo? Found { get; init; } public SpoolJobState State { get; set; } = SpoolJobState.InQueue; public Task<SpoolJobInfo?> FindJobByDocumentNameAsync(string q, string n, CancellationToken c) => Task.FromResult(Found); public Task<SpoolJobState> GetJobStateAsync(string q, string s, CancellationToken c) => Task.FromResult(State); public Task CancelJobAsync(string q, string s, CancellationToken c) => Task.CompletedTask; }
 }

@@ -1,0 +1,36 @@
+{
+  "type": "config_sync",
+  "payload": {
+    "agent_id": 2,
+    "name": "KDOF1",
+    "routes": [
+      {
+        "route_id": 4,
+        "printer_id": 5,
+        "printer_name": "Kommandofunk",
+        "local_queue": "Kyocera Kommandofunk",
+        "priority": 10,
+        "render_mode": "driver",
+        "options": {
+          "orientation": "landscape",
+          "scaling": "actual",
+          "dpi": 300,
+          "tray": "Kassette 1"
+        },
+        "identity_check": true,
+        "defaults": {
+          "copies": 1,
+          "duplex": "off",
+          "color": "color",
+          "media": "A4"
+        }
+      }
+    ],
+    "intervals": {
+      "heartbeat_s": 30,
+      "readiness_s": 30,
+      "lease_poll_s": 15,
+      "renew_s": 20
+    }
+  }
+}
