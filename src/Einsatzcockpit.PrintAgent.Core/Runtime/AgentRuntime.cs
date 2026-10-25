@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.Text.Json;
 using Einsatzcockpit.PrintAgent.Core.Abstractions;
 using Einsatzcockpit.PrintAgent.Core.Cloud;
@@ -24,8 +23,6 @@ public sealed class AgentRuntime : IAsyncDisposable
     private readonly IStatusSink? _statusSink;
     private readonly string? _cloudUrl;
     private readonly IUpdateGate _updateGate;
-    private readonly SemaphoreSlim _grants = new(2, 2);
-    private readonly ConcurrentDictionary<string, SemaphoreSlim> _routes = new();
     private readonly List<Task> _tasks = [];
     private CancellationTokenSource? _lifetime;
     private ConfigSync? _config;
@@ -135,21 +132,8 @@ public sealed class AgentRuntime : IAsyncDisposable
         var grants = await _cloud.RequestLeasesAsync(5);
         foreach (var grant in grants)
         {
-            _ = HandleGrantAsync(grant, cancellationToken);
+            _ = _processor.HandleGrantAsync(grant, cancellationToken);
         }
-    }
-
-    private async Task HandleGrantAsync(LeaseGrant grant, CancellationToken cancellationToken)
-    {
-        await _grants.WaitAsync(cancellationToken);
-        var route = _routes.GetOrAdd(grant.Route.LocalQueue, _ => new SemaphoreSlim(1, 1));
-        try
-        {
-            await route.WaitAsync(cancellationToken);
-            try { await _processor.HandleGrantAsync(grant, cancellationToken); }
-            finally { route.Release(); }
-        }
-        finally { _grants.Release(); }
     }
 
     private Task RenewAsync(CancellationToken cancellationToken)

@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Text.Json;
 using Einsatzcockpit.PrintAgent.Core.Abstractions;
 using Einsatzcockpit.PrintAgent.Core.Protocol;
@@ -14,6 +15,8 @@ public sealed class JobProcessor
     private readonly IPrintSpooler _spooler;
     private readonly IClock _clock;
     private readonly ILogger<JobProcessor> _logger;
+    private readonly SemaphoreSlim _grants = new(2, 2);
+    private readonly ConcurrentDictionary<string, SemaphoreSlim> _routes = new();
 
     public JobProcessor(JobStore store, ICloudChannel cloud, IArtifactFetcher fetcher, IPrintSubmitter submitter, IPrintSpooler spooler, IClock clock, ILogger<JobProcessor>? logger = null)
     {
@@ -41,7 +44,16 @@ public sealed class JobProcessor
             grant.ArtifactUrl, grant.RenderKind, JsonSerializer.Serialize(grant.Options, ProtocolJson.Options), JsonSerializer.Serialize(grant.Route, ProtocolJson.Options), null, null,
             $"ECPG-{grant.JobId}-g{grant.LeaseGeneration}", existing?.Attempts ?? 0, null, existing?.CreatedAt ?? now, now);
         if (existing is null) _store.Insert(job); else _store.Update(job);
-        await ProcessAsync(grant, cancellationToken);
+        // Auch wartende Grants sofort persistieren, damit der Runtime-Renewal sie erfasst.
+        await _grants.WaitAsync(cancellationToken);
+        var route = _routes.GetOrAdd(grant.Route.LocalQueue, _ => new SemaphoreSlim(1, 1));
+        try
+        {
+            await route.WaitAsync(cancellationToken);
+            try { await ProcessAsync(grant, cancellationToken); }
+            finally { route.Release(); }
+        }
+        finally { _grants.Release(); }
     }
 
     private async Task ProcessAsync(LeaseGrant grant, CancellationToken cancellationToken)
@@ -54,6 +66,9 @@ public sealed class JobProcessor
             // auf "spooled" setzen und den folgenden print_intent ungueltig machen.
             job = Change(job, JobStates.Fetching); _store.Update(job);
             var pdfPath = await _fetcher.FetchAsync(grant, cancellationToken);
+            // Abandon/Cancel oder ein neuer Lease können während des Downloads eintreffen.
+            job = _store.Get(grant.JobId);
+            if (job is null || job.LeaseToken != grant.LeaseToken || !JobStates.BeforeSubmitting(job.State)) return;
             job = Change(job, JobStates.IntentPending, pdfPath: pdfPath); _store.Update(job);
             var intent = await _cloud.SendIntentAsync(job.JobId, job.LeaseToken);
             job = _store.Get(job.JobId);
@@ -100,6 +115,7 @@ public sealed class JobProcessor
         }
         catch (Exception ex) when (_store.Get(grant.JobId) is { } current && JobStates.BeforeSubmitting(current.State))
         {
+            if (current.LeaseToken != grant.LeaseToken) return;
             _logger.LogWarning(ex, "Abruf für Druckjob {JobId} ist fehlgeschlagen.", grant.JobId);
             current = Change(current, JobStates.Failed, error: ex.Message); _store.Update(current);
             await StatusAsync(current, "failed", "fetching", error: ex.Message);

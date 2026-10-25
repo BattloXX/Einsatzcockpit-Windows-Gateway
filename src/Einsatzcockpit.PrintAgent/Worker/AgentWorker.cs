@@ -107,7 +107,7 @@ public sealed class AgentWorker : BackgroundService
         ]);
         var renderer = new EdgeHtmlRenderer(options.EdgePath, options.HtmlReadyTimeoutS,
             _loggerFactory.CreateLogger<EdgeHtmlRenderer>());
-        var fetcher = new HttpArtifactFetcher(_paths.SpoolDirectory, options.Proxy, renderer);
+        var fetcher = new HttpArtifactFetcher(_paths.SpoolDirectory, options.Proxy, renderer, new Uri(options.CloudUrl!));
         var proxy = string.IsNullOrWhiteSpace(options.Proxy) ? null : new WebProxy(options.Proxy);
         var transport = new ClientWebSocketTransport(new WebSocketTransportOptions(proxy));
         var cloud = new CloudConnection(transport, AgentConfiguration.WebSocketUri(options.CloudUrl!), token, store, logger: _loggerFactory.CreateLogger<CloudConnection>());

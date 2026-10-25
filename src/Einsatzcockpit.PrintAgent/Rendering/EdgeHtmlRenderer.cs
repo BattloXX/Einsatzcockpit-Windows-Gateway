@@ -19,6 +19,7 @@ public sealed class EdgeHtmlRenderer
 
     public async Task RenderAsync(string url, string targetPath, CancellationToken cancellationToken)
     {
+        cancellationToken.ThrowIfCancellationRequested();
         var edgePath = FindEdge();
         if (edgePath is null)
         {
@@ -33,17 +34,23 @@ public sealed class EdgeHtmlRenderer
         };
         await using var browser = await Puppeteer.LaunchAsync(options);
         await using var page = await browser.NewPageAsync();
-        await page.GoToAsync(url, new NavigationOptions
+        var response = await page.GoToAsync(url, new NavigationOptions
         {
             WaitUntil = [WaitUntilNavigation.Networkidle2],
             Timeout = 30_000
-        });
+        }).WaitAsync(cancellationToken);
+        if (response is null || !response.Ok)
+            throw new InvalidDataException("HTML-Artefakt konnte nicht geladen werden (HTTP-Status).");
+        var contentType = response.Headers.FirstOrDefault(header =>
+            header.Key.Equals("content-type", StringComparison.OrdinalIgnoreCase)).Value;
+        if (contentType is null || !contentType.Split(';')[0].Trim().Equals("text/html", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidDataException("Artefakt ist kein HTML (Content-Type).");
         try
         {
             await page.WaitForFunctionAsync("window.__ecpgReady === true", new WaitForFunctionOptions
             {
                 Timeout = _readyTimeoutSeconds * 1_000
-            });
+            }).WaitAsync(cancellationToken);
         }
         catch (WaitTaskTimeoutException)
         {
@@ -55,7 +62,7 @@ public sealed class EdgeHtmlRenderer
         {
             PreferCSSPageSize = true,
             PrintBackground = true
-        });
+        }).WaitAsync(cancellationToken);
     }
 
     private string? FindEdge()

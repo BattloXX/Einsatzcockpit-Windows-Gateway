@@ -87,7 +87,7 @@ public sealed class CloudConnection : ICloudChannel
 
     public async Task<IntentResult> SendIntentAsync(string jobId, string token)
     {
-        var answer = await RequestAsync("print_intent", new { job_id = jobId, lease_token = token });
+        var answer = await RequestAsync("print_intent", new LeaseReference(jobId, token));
         return answer is null ? new IntentResult(jobId, false, "no_connection") : Deserialize<IntentResult>(answer.Payload);
     }
 
@@ -201,6 +201,7 @@ public sealed class CloudConnection : ICloudChannel
             // Heartbeats werden nur persistiert. Ping/Pong liefert auch bei pausiertem
             // Lease-Polling (z.B. Update) einen Empfangsnachweis fuer den Idle-Timeout.
             await SendMessageAsync("ping", new { }, cancellationToken);
+            await _outbox.PumpAsync(cancellationToken);
         }
     }
 
