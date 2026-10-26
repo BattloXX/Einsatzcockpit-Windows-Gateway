@@ -70,7 +70,7 @@ public sealed class JobProcessorTests : IDisposable
         await p.MonitorAsync(); Assert.Contains(cloud.Statuses, x => x.Status == "printing" && x.Error == "Papier leer");
         Assert.Equal(JobStates.Spooled, store.Get("j1")!.State);
         spooler.State = SpoolJobState.Gone; await p.MonitorAsync(); Assert.Equal(JobStates.Done, store.Get("j1")!.State);
-        store.Update(Job(JobStates.Spooled) with { SpoolRef = "7" }); spooler.State = SpoolJobState.Deleted; await p.MonitorAsync(); Assert.Equal(JobStates.Failed, store.Get("j1")!.State);
+        store.Update(Job(JobStates.Spooled) with { SpoolRef = "7" }); spooler.State = SpoolJobState.Deleted; await p.MonitorAsync(); Assert.Equal(JobStates.Uncertain, store.Get("j1")!.State);
     }
 
     [Fact]
@@ -119,6 +119,132 @@ public sealed class JobProcessorTests : IDisposable
         Assert.Equal(regrant ? 1 : 0, submitter.Calls);
         Assert.Equal(regrant ? JobStates.Spooled : JobStates.Abandoned, new JobStore(_path).Get("123")!.State);
         Assert.DoesNotContain(cloud.Statuses, status => status.LeaseToken == "t");
+    }
+
+    [Fact]
+    public void TerminalStateAndOutboxCommitTogetherOrNeither()
+    {
+        var store = new JobStore(_path);
+        store.Insert(Job(JobStates.Spooled));
+        using var sql = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path}");
+        sql.Open();
+        using var command = sql.CreateCommand();
+        command.CommandText = "CREATE TRIGGER fail_outbox BEFORE INSERT ON outbox BEGIN SELECT RAISE(ABORT,'simulated crash'); END";
+        command.ExecuteNonQuery();
+        var done = Job(JobStates.Done);
+        Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => store.UpdateWithOutbox(done, "job_status", "{}", DateTimeOffset.UtcNow));
+        Assert.Equal(JobStates.Spooled, store.Get("j1")!.State);
+        Assert.Empty(store.PendingOutbox());
+        command.CommandText = "DROP TRIGGER fail_outbox";
+        command.ExecuteNonQuery();
+        Assert.True(store.UpdateWithOutbox(done, "job_status", "{}", DateTimeOffset.UtcNow));
+        Assert.Equal(JobStates.Done, new JobStore(_path).Get("j1")!.State);
+        Assert.Single(new JobStore(_path).PendingOutbox());
+        Assert.False(store.UpdateWithOutbox(done with { State = JobStates.Spooled }, "job_status", "{}", DateTimeOffset.UtcNow));
+    }
+
+    [Theory]
+    [InlineData(JobStates.Done)]
+    [InlineData(JobStates.Failed)]
+    [InlineData(JobStates.Abandoned)]
+    [InlineData(JobStates.Uncertain)]
+    public void CleanupRetainsTerminalJobsFor90DaysAndReturnsPdfPaths(string state)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var store = new JobStore(_path);
+        foreach (var age in new[] { 1, 10, 90, 91 })
+            store.Insert(Job(state) with { JobId = $"j{age}", UpdatedAt = now.AddDays(-age) });
+        var cleaned = store.Cleanup(now.AddDays(-7), now);
+        Assert.Equal(3, cleaned.Count);
+        Assert.All(cleaned, job => Assert.Equal("x.pdf", job.PdfPath));
+        Assert.Equal("x.pdf", store.Get("j1")!.PdfPath);
+        foreach (var id in new[] { "j10", "j90" })
+        {
+            var retained = store.Get(id)!;
+            Assert.Equal(state, retained.State);
+            Assert.Equal("t", retained.LeaseToken);
+            Assert.Null(retained.PdfPath);
+            Assert.Equal("", retained.ArtifactUrl);
+            Assert.Null(retained.OptionsJson);
+        }
+        Assert.Null(store.Get("j91"));
+    }
+
+    [Theory]
+    [InlineData(JobStates.Granted)]
+    [InlineData(JobStates.Fetching)]
+    [InlineData(JobStates.IntentPending)]
+    [InlineData(JobStates.Submitting)]
+    [InlineData(JobStates.Spooled)]
+    public void CleanupNeverDeletesOrClearsNonterminalJobs(string state)
+    {
+        var now = DateTimeOffset.UtcNow;
+        var store = new JobStore(_path);
+        var job = Job(state) with { UpdatedAt = now.AddDays(-100) };
+        store.Insert(job);
+        Assert.Empty(store.Cleanup(now.AddDays(-7), now));
+        Assert.Equal(job, store.Get(job.JobId));
+    }
+
+    [Fact]
+    public void CleanupPreservesUnacknowledgedOutboxForDeletedJobs()
+    {
+        var now = DateTimeOffset.UtcNow;
+        var store = new JobStore(_path);
+        store.Insert(Job(JobStates.Done) with { UpdatedAt = now.AddDays(-100) });
+        var payload = JsonSerializer.Serialize(new JobStatusMessage("j1", "t", "done", "spooled"), ProtocolJson.Options);
+        var pendingId = store.AddOutbox("job_status", payload, now.AddDays(-100));
+        var ackedId = store.AddOutbox("job_status", payload, now.AddDays(-100));
+        var pump = new Einsatzcockpit.PrintAgent.Core.Cloud.OutboxPump(store, (_, _) => Task.CompletedTask);
+        pump.Ack(ackedId);
+        store.IncrementOutboxAttempts(pendingId);
+        store.Cleanup(now.AddDays(-7), now);
+        Assert.Null(store.Get("j1"));
+        var pending = Assert.Single(new JobStore(_path).PendingOutbox());
+        Assert.Equal(pendingId, pending.Id);
+        Assert.Equal(payload, pending.PayloadJson);
+        pump.Ack(pendingId);
+        Assert.Empty(store.PendingOutbox());
+    }
+
+    [Fact]
+    public async Task DeletingObservationSurvivesRestartAndGoneBecomesUncertain()
+    {
+        var store = new JobStore(_path);
+        store.Insert(Job(JobStates.Spooled) with { SpoolRef = "7" });
+        var cloud = new FakeCloud();
+        await Create(cloud, store, spooler: new FakeSpooler { State = SpoolJobState.Deleting }).MonitorAsync();
+        Assert.True(store.Get("j1")!.SpoolDeleting);
+        Assert.Equal(JobStates.Spooled, store.Get("j1")!.State);
+        Assert.Empty(cloud.Statuses);
+        // Auch zwischenzeitliche Fehlermeldungen duerfen die Beobachtung nicht zuruecksetzen.
+        await Create(cloud, store, spooler: new FakeSpooler { State = SpoolJobState.Error(2, "Fehler") }).MonitorAsync();
+        var reopened = new JobStore(_path);
+        Assert.True(reopened.Get("j1")!.SpoolDeleting);
+        var restartedCloud = new FakeCloud();
+        await Create(restartedCloud, reopened, spooler: new FakeSpooler { State = SpoolJobState.Gone }).MonitorAsync();
+        Assert.Equal(JobStates.Uncertain, reopened.Get("j1")!.State);
+        Assert.Equal("uncertain", Assert.Single(restartedCloud.Statuses).Status);
+        Assert.Contains(reopened.PendingOutbox(), item => item.PayloadJson.Contains("uncertain"));
+    }
+
+    [Fact]
+    public void ExistingSchemaMigratesSpoolDeletingWithFalseDefault()
+    {
+        var store = new JobStore(_path);
+        store.Insert(Job(JobStates.Spooled));
+        using (var sql = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path}"))
+        {
+            sql.Open();
+            using var command = sql.CreateCommand();
+            command.CommandText = "ALTER TABLE jobs DROP COLUMN spool_deleting";
+            command.ExecuteNonQuery();
+        }
+        var reopened = new JobStore(_path);
+        var job = reopened.Get("j1")!;
+        Assert.False(job.SpoolDeleting);
+        reopened.Update(job with { SpoolDeleting = true });
+        Assert.True(new JobStore(_path).Get("j1")!.SpoolDeleting);
     }
 
     private JobProcessor Create(FakeCloud cloud, JobStore? store = null, FakeFetcher? fetcher = null, FakeSubmitter? submitter = null, FakeSpooler? spooler = null) =>

@@ -19,13 +19,13 @@ public sealed class IppDirectSubmitter(HttpClient? client = null) : IPrintSubmit
             new IppAttribute(0x44, "media", PrintValueMappings.Media(options?.Media) == "A3" ? "iso_a3_297x420mm" : "iso_a4_210x297mm"), new IppAttribute(0x44, "print-color-mode", PrintValueMappings.IsColor(options?.Color) ? "color" : "monochrome")
         });
         var bytes = IppMessage.Encode(IppMessage.PrintJob, NextId(), attributes, await File.ReadAllBytesAsync(request.PdfPath, cancellationToken));
-        var response = await Send(uri, bytes, cancellationToken); if (response.StatusCode >= 0x0400) throw new PrintRejectedException($"IPP-Drucker lehnt Auftrag ab (0x{response.StatusCode:X4}).");
-        if (!response.Attributes.TryGetValue("job-id", out var job) || job is not int id) throw new PrintRejectedException("IPP-Drucker lieferte keine Job-ID.");
+        var response = await Send(uri, bytes, cancellationToken); if (response.StatusCode >= 0x0400) throw new IOException($"IPP-Ergebnis nach Uebergabe unklar (0x{response.StatusCode:X4}).");
+        if (!response.Attributes.TryGetValue("job-id", out var job) || job is not int id) throw new IOException("IPP-Aufruf ohne Job-ID; Annahme unbekannt.");
         return new SubmitResult($"ipp:{uri}|{id}");
     }
     public async Task<SpoolJobState> GetJobStateAsync(string spoolRef, CancellationToken cancellationToken)
     {
-        var separator = spoolRef.LastIndexOf('|'); if (separator <= 4 || !int.TryParse(spoolRef[(separator + 1)..], out var job)) return SpoolJobState.Gone;
+        var separator = spoolRef.LastIndexOf('|'); if (separator <= 4 || !int.TryParse(spoolRef[(separator + 1)..], out var job)) return SpoolJobState.Error(0, "Ungueltige IPP-Referenz");
         var uri = new Uri(spoolRef[4..separator]);
         try
         {
@@ -42,6 +42,6 @@ public sealed class IppDirectSubmitter(HttpClient? client = null) : IPrintSubmit
     }
     private async Task<IppResponse> Send(Uri uri, byte[] bytes, CancellationToken cancellationToken) { using var message = new HttpRequestMessage(HttpMethod.Post, uri) { Content = new ByteArrayContent(bytes) }; message.Content.Headers.ContentType = new MediaTypeHeaderValue("application/ipp"); using var response = await _client.SendAsync(message, cancellationToken); return IppMessage.Decode(await response.Content.ReadAsByteArrayAsync(cancellationToken)); }
     private static IEnumerable<IppAttribute> Basic(Uri uri, string name) => new[] { new IppAttribute(0x47, "attributes-charset", "utf-8"), new IppAttribute(0x48, "attributes-natural-language", "de"), new IppAttribute(0x45, "printer-uri", uri.ToString()), new IppAttribute(0x42, "requesting-user-name", "Einsatzcockpit"), new IppAttribute(0x42, "job-name", name) };
-    private static Uri TargetUri(RouteConfig route) { var value = CommandSubmitter.Option(route, "target_uri").GetString() ?? route.LocalQueue; return Uri.TryCreate(value, UriKind.Absolute, out var uri) ? uri : throw new PrintRejectedException("Ungültige IPP-Ziel-URI."); }
+    private static Uri TargetUri(RouteConfig route) { var option = CommandSubmitter.Option(route, "target_uri"); var value = option.ValueKind == System.Text.Json.JsonValueKind.String ? option.GetString() ?? route.LocalQueue : route.LocalQueue; return Uri.TryCreate(value, UriKind.Absolute, out var uri) ? uri : throw new PrintRejectedException("Ungültige IPP-Ziel-URI."); }
     private static int NextId() => Interlocked.Increment(ref _requestId);
 }

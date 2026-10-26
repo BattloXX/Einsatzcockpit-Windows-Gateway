@@ -19,7 +19,7 @@ public sealed class CommandSubmitter(IReadOnlyCollection<string> allowedCommands
         using var process = new Process { StartInfo = new ProcessStartInfo(program) { UseShellExecute = false, RedirectStandardError = true } }; foreach (var argument in PrintPathHelpers.ExpandCommandArguments(parts.Skip(1), values)) process.StartInfo.ArgumentList.Add(argument);
         process.Start(); var stderr = process.StandardError.ReadToEndAsync(); using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(120)); using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, timeout.Token);
         try { await process.WaitForExitAsync(linked.Token); } catch (OperationCanceledException) when (timeout.IsCancellationRequested) { process.Kill(true); throw new TimeoutException("Druckkommando hat das Zeitlimit überschritten."); }
-        if (process.ExitCode != 0) throw new PrintRejectedException($"Druckkommando beendet mit {process.ExitCode}: {(await stderr)[..Math.Min(500, (await stderr).Length)]}");
+        if (process.ExitCode != 0) throw new IOException($"Druckkommando beendet mit {process.ExitCode}: {(await stderr)[..Math.Min(500, (await stderr).Length)]}");
         return new SubmitResult($"cmd:{process.Id}");
     }
     internal static JsonElement Option(RouteConfig route, string name) => route.Options is { } options && options.TryGetProperty(name, out var value) ? value : default;

@@ -162,7 +162,8 @@ public sealed class AgentRuntime : IAsyncDisposable
 
     private Task CleanupAsync()
     {
-        foreach (var job in _store.Cleanup(_clock.UtcNow.AddDays(-7)))
+        var now = _clock.UtcNow;
+        foreach (var job in _store.Cleanup(now.AddDays(-7), now))
         {
             if (job.PdfPath is not null)
             {

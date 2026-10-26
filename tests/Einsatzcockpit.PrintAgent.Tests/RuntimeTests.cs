@@ -182,7 +182,8 @@ public sealed class RuntimeTests : IDisposable
 
         await runtime.StartAsync();
 
-        Assert.Null(store.Get("old"));
+        Assert.NotNull(store.Get("old"));
+        Assert.Null(store.Get("old")!.PdfPath);
         Assert.False(File.Exists(oldPdf));
         Assert.NotNull(store.Get("new"));
     }
