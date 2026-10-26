@@ -23,12 +23,26 @@ public sealed class RecoveryService
         }
         foreach (var job in _store.GetByState(JobStates.Submitting))
         {
-            var route = JsonSerializer.Deserialize<RouteConfig>(job.RouteJson, ProtocolJson.Options)!;
-            var found = await _spooler.FindJobByDocumentNameAsync(route.LocalQueue, job.DocumentName, cancellationToken);
+            cancellationToken.ThrowIfCancellationRequested();
+            SpoolJobInfo? found = null;
+            var error = "Übergabe beim Neustart unterbrochen – bitte am Drucker prüfen";
+            try
+            {
+                var route = JsonSerializer.Deserialize<RouteConfig>(job.RouteJson, ProtocolJson.Options)
+                    ?? throw new InvalidDataException("Missing recovery route");
+                found = await _spooler.FindJobByDocumentNameAsync(route.LocalQueue, job.DocumentName, cancellationToken);
+            }
+            catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+            catch (Exception ex)
+            {
+                // Ein defekter Spooler/Queue blockiert weder Cloud-Reconnect noch
+                // die Wiederherstellung anderer Jobs. Keine Exception-Nutzdaten loggen.
+                error = "Spoolerstatus beim Neustart nicht feststellbar – bitte am Drucker prüfen";
+                _logger.LogWarning("Recovery fuer Job {JobId} nicht moeglich ({ErrorType}).", job.JobId, ex.GetType().Name);
+            }
             if (found is not null) _store.Update(job with { State = JobStates.Spooled, SpoolRef = found.SpoolRef, UpdatedAt = _clock.UtcNow });
             else
             {
-                const string error = "Übergabe beim Neustart unterbrochen – bitte am Drucker prüfen";
                 var uncertain = job with { State = JobStates.Uncertain, Error = error, UpdatedAt = _clock.UtcNow };
                 var status = new JobStatusMessage(job.JobId, job.LeaseToken, "uncertain", "submitting", null, error);
                 _store.UpdateWithOutbox(uncertain, "job_status", JsonSerializer.Serialize(status, ProtocolJson.Options), _clock.UtcNow);

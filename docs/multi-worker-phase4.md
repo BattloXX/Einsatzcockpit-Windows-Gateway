@@ -47,3 +47,23 @@ Rollback erst nach Anhalten neuer Auslöser, Drain beziehungsweise manueller Pr�
 unklarer Ausgaben und Sicherung von Cloud-DB sowie lokalem SQLite-Journal. Ein alter
 Client darf nicht durch Löschen des Journals oder Zurücksetzen möglicher Übergaben
 zu einem vermeintlichen neuen Druckversuch gebracht werden.
+
+## Nachprüfung: Recovery bei defekter Queue
+
+Die Spoolersuche isoliert Exceptions je lokalem `submitting`-Job. Für einen nicht
+abklärbaren Job werden `uncertain` und die Status-Outbox atomar gespeichert;
+andere Jobs werden weiterhergestellt. Anschließend kann der Agent seine Cloud-
+Verbindung und Polling-/Renewal-Schleifen starten. Ungültige gespeicherte Routen
+werden ebenfalls je Job behandelt. Eine angeforderte Cancellation wird weitergereicht;
+ein Persistenzfehler darf den sicheren Recovery-Abschluss weiterhin verhindern.
+
+Die lokale DB-Struktur und das Cloud-Protokoll ändern sich dafür nicht. Logs
+enthalten nur Job-ID und Exception-Klassennamen, keine Exception-Nutzdaten.
+Ein erneuter Neustart eines bereits als unklar gespeicherten Jobs erzeugt keine
+zweite Status-Outboxmeldung und keine erneute Druckübergabe.
+
+Die Suite besteht mit **95 Tests**, einschließlich der vier HTML-/HTTP-Renderfälle
+mit einem lokalen Chromium. Auf dem Linux-Prüfhost wurde dafür ausschließlich ein
+temporärer Browserwrapper verwendet; Produktcode und produktive Browserargumente
+bleiben unverändert. Der Windows-Cross-Build besteht ebenfalls. Das ersetzt weder
+echte Windows-Spoolerfehler noch physische Ausdrucke auf den Zielgeräten.
