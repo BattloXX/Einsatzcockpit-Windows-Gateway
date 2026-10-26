@@ -29,9 +29,9 @@ public sealed class RecoveryService
             else
             {
                 const string error = "Übergabe beim Neustart unterbrochen – bitte am Drucker prüfen";
-                _store.Update(job with { State = JobStates.Uncertain, Error = error, UpdatedAt = _clock.UtcNow });
+                var uncertain = job with { State = JobStates.Uncertain, Error = error, UpdatedAt = _clock.UtcNow };
                 var status = new JobStatusMessage(job.JobId, job.LeaseToken, "uncertain", "submitting", null, error);
-                _store.AddOutbox("job_status", JsonSerializer.Serialize(status, ProtocolJson.Options), _clock.UtcNow);
+                _store.UpdateWithOutbox(uncertain, "job_status", JsonSerializer.Serialize(status, ProtocolJson.Options), _clock.UtcNow);
             }
         }
         return _store.GetByState(JobStates.Submitting, JobStates.Spooled, JobStates.Uncertain)

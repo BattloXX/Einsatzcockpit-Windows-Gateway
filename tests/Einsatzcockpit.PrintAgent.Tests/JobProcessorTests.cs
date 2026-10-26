@@ -70,7 +70,7 @@ public sealed class JobProcessorTests : IDisposable
         await p.MonitorAsync(); Assert.Contains(cloud.Statuses, x => x.Status == "printing" && x.Error == "Papier leer");
         Assert.Equal(JobStates.Spooled, store.Get("j1")!.State);
         spooler.State = SpoolJobState.Gone; await p.MonitorAsync(); Assert.Equal(JobStates.Done, store.Get("j1")!.State);
-        store.Update(Job(JobStates.Spooled) with { SpoolRef = "7" }); spooler.State = SpoolJobState.Deleted; await p.MonitorAsync(); Assert.Equal(JobStates.Failed, store.Get("j1")!.State);
+        store.Update(Job(JobStates.Spooled) with { SpoolRef = "7" }); spooler.State = SpoolJobState.Deleted; await p.MonitorAsync(); Assert.Equal(JobStates.Uncertain, store.Get("j1")!.State);
     }
 
     [Fact]
@@ -119,6 +119,28 @@ public sealed class JobProcessorTests : IDisposable
         Assert.Equal(regrant ? 1 : 0, submitter.Calls);
         Assert.Equal(regrant ? JobStates.Spooled : JobStates.Abandoned, new JobStore(_path).Get("123")!.State);
         Assert.DoesNotContain(cloud.Statuses, status => status.LeaseToken == "t");
+    }
+
+    [Fact]
+    public void TerminalStateAndOutboxCommitTogetherOrNeither()
+    {
+        var store = new JobStore(_path);
+        store.Insert(Job(JobStates.Spooled));
+        using var sql = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={_path}");
+        sql.Open();
+        using var command = sql.CreateCommand();
+        command.CommandText = "CREATE TRIGGER fail_outbox BEFORE INSERT ON outbox BEGIN SELECT RAISE(ABORT,'simulated crash'); END";
+        command.ExecuteNonQuery();
+        var done = Job(JobStates.Done);
+        Assert.Throws<Microsoft.Data.Sqlite.SqliteException>(() => store.UpdateWithOutbox(done, "job_status", "{}", DateTimeOffset.UtcNow));
+        Assert.Equal(JobStates.Spooled, store.Get("j1")!.State);
+        Assert.Empty(store.PendingOutbox());
+        command.CommandText = "DROP TRIGGER fail_outbox";
+        command.ExecuteNonQuery();
+        Assert.True(store.UpdateWithOutbox(done, "job_status", "{}", DateTimeOffset.UtcNow));
+        Assert.Equal(JobStates.Done, new JobStore(_path).Get("j1")!.State);
+        Assert.Single(new JobStore(_path).PendingOutbox());
+        Assert.False(store.UpdateWithOutbox(done with { State = JobStates.Spooled }, "job_status", "{}", DateTimeOffset.UtcNow));
     }
 
     private JobProcessor Create(FakeCloud cloud, JobStore? store = null, FakeFetcher? fetcher = null, FakeSubmitter? submitter = null, FakeSpooler? spooler = null) =>

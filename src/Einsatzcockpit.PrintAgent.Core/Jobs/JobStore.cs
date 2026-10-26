@@ -79,6 +79,26 @@ public sealed class JobStore
         cmd.CommandText = "UPDATE jobs SET lease_token=$token,generation=$gen,state=$state,document_type=$doc,artifact_url=$url,render_kind=$kind,options_json=$options,route_json=$route,pdf_path=$pdf,spool_ref=$spool,document_name=$name,attempts=$attempts,error=$error,updated_at=$updated,cancel_requested=$cancel WHERE job_id=$id";
         Bind(cmd, job); cmd.ExecuteNonQuery();
     }
+    public bool UpdateWithOutbox(StoredJob job, string type, string payloadJson, DateTimeOffset now)
+    {
+        using var c = Open();
+        using var transaction = c.BeginTransaction();
+        using var cmd = c.CreateCommand();
+        cmd.Transaction = transaction;
+        cmd.CommandText = "UPDATE jobs SET state=$state,pdf_path=$pdf,spool_ref=$spool,attempts=$attempts,error=$error,updated_at=$updated,cancel_requested=$cancel WHERE job_id=$id AND lease_token=$token AND generation=$gen AND (state NOT IN ('done','uncertain','abandoned') OR state=$state)";
+        Bind(cmd, job);
+        if (cmd.ExecuteNonQuery() != 1) return false;
+        cmd.Parameters.Clear();
+        cmd.CommandText = "INSERT INTO outbox(id,type,payload_json,created_at,attempts) VALUES($id,$type,$payload,$created,0)";
+        cmd.Parameters.AddWithValue("$id", Guid.NewGuid().ToString());
+        cmd.Parameters.AddWithValue("$type", type);
+        cmd.Parameters.AddWithValue("$payload", payloadJson);
+        cmd.Parameters.AddWithValue("$created", now.ToString("O"));
+        cmd.ExecuteNonQuery();
+        transaction.Commit();
+        return true;
+    }
+
     public string AddOutbox(string type, string payloadJson, DateTimeOffset now)
     {
         using var c = Open(); using var cmd = c.CreateCommand(); cmd.CommandText = "INSERT INTO outbox(id,type,payload_json,created_at,attempts) VALUES($id,$type,$payload,$created,0)";
@@ -96,7 +116,7 @@ public sealed class JobStore
     public IReadOnlyList<StoredJob> Cleanup(DateTimeOffset olderThan)
     {
         var jobs = GetByState(JobStates.Done, JobStates.Failed, JobStates.Abandoned, JobStates.Uncertain).Where(x => x.UpdatedAt < olderThan).ToArray();
-        using var c = Open(); using var cmd = c.CreateCommand(); cmd.CommandText = "DELETE FROM jobs WHERE job_id=$id";
+        using var c = Open(); using var cmd = c.CreateCommand(); cmd.CommandText = "UPDATE jobs SET pdf_path=NULL,artifact_url='',options_json=NULL WHERE job_id=$id";
         foreach (var job in jobs) { cmd.Parameters.Clear(); cmd.Parameters.AddWithValue("$id", job.JobId); cmd.ExecuteNonQuery(); }
         return jobs;
     }

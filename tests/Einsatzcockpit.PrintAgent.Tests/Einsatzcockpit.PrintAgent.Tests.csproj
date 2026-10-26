@@ -19,6 +19,12 @@
     <Using Include="Xunit" />
     <None Update="Fixtures/*.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="Fixtures/*.pdf" CopyToOutputDirectory="PreserveNewest" />
+    <Compile Include="../../src/Einsatzcockpit.PrintAgent/Printing/FolderSubmitter.cs" Link="FolderSubmitter.cs" />
+    <Compile Include="../../src/Einsatzcockpit.PrintAgent/Printing/WindowsSpooler.cs" Link="WindowsSpooler.cs" />
+    <Compile Include="../../src/Einsatzcockpit.PrintAgent/Printing/CompositeSpooler.cs" Link="CompositeSpooler.cs" />
+    <Compile Include="../../src/Einsatzcockpit.PrintAgent/Printing/Native/Winspool.cs" Link="Winspool.cs" />
+    <Compile Include="../../src/Einsatzcockpit.PrintAgent/Printing/CommandSubmitter.cs" Link="CommandSubmitter.cs" />
+    <Compile Include="../../src/Einsatzcockpit.PrintAgent/Printing/IppDirectSubmitter.cs" Link="IppDirectSubmitter.cs" />
     <Compile Include="../../src/Einsatzcockpit.PrintAgent/Pairing/PairingClient.cs" Link="PairingClient.cs" />
     <Compile Include="../../src/Einsatzcockpit.PrintAgent/Security/ITokenStore.cs" Link="ITokenStore.cs" />
     <Compile Include="../../src/Einsatzcockpit.PrintAgent/Fetching/HttpArtifactFetcher.cs" Link="HttpArtifactFetcher.cs" />

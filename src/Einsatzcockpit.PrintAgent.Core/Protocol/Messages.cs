@@ -28,7 +28,7 @@ public sealed record RouteConfig(long RouteId, long PrinterId, string LocalQueue
 public sealed record PrintOptions(int? Copies = null, string? Duplex = null, string? Color = null, string? Media = null);
 public sealed record IntentResult([property: JsonConverter(typeof(ProtocolIdConverter))] string JobId, bool Ok, string? Reason = null);
 public sealed record JobStatusMessage([property: JsonConverter(typeof(ProtocolIdConverter))] string JobId, string LeaseToken, string Status, string Phase,
-    string? SpoolRef = null, string? Error = null);
+    string? SpoolRef = null, string? Error = null, bool NotSubmitted = false);
 public sealed record OpenJob([property: JsonConverter(typeof(ProtocolIdConverter))] string JobId, string LeaseToken, string LocalState);
 public sealed record HelloMessage(string Version, HostInfo HostInfo, IReadOnlyList<OpenJob> OpenJobs);
 public sealed record HostInfo(string Host, string Os, string MachineId);

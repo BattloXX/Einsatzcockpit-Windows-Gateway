@@ -90,8 +90,8 @@ public sealed class JobProcessor
                 // Der Druckweg hat den Auftrag nachweislich nicht angenommen (z. B. Queue fehlt,
                 // Spooler lehnt StartDoc ab) – sicherer Fehlschlag, die Cloud darf Ersatz drucken.
                 _logger.LogWarning(ex, "Druckweg hat Job {JobId} abgelehnt.", job.JobId);
-                job = Change(job, JobStates.Failed, error: ex.Message); _store.Update(job);
-                await StatusAsync(job, "failed", "submitting", error: ex.Message);
+                job = Change(job, JobStates.Failed, error: ex.Message);
+                await StatusAsync(job, "failed", "submitting", error: ex.Message, notSubmitted: true);
                 return;
             }
             catch (Exception ex)
@@ -100,7 +100,7 @@ public sealed class JobProcessor
                 // unbekannt. Nie automatisch neu drucken, sondern als unklar melden.
                 _logger.LogError(ex, "Übergabe von Job {JobId} mit unklarem Ausgang abgebrochen.", job.JobId);
                 var error = "Übergabe an den Drucker unterbrochen – bitte am Drucker prüfen: " + ex.Message;
-                job = Change(job, JobStates.Uncertain, error: error); _store.Update(job);
+                job = Change(job, JobStates.Uncertain, error: error);
                 await StatusAsync(job, "uncertain", "submitting", error: error);
                 return;
             }
@@ -117,7 +117,7 @@ public sealed class JobProcessor
         {
             if (current.LeaseToken != grant.LeaseToken) return;
             _logger.LogWarning(ex, "Abruf für Druckjob {JobId} ist fehlgeschlagen.", grant.JobId);
-            current = Change(current, JobStates.Failed, error: ex.Message); _store.Update(current);
+            current = Change(current, JobStates.Failed, error: ex.Message);
             await StatusAsync(current, "failed", "fetching", error: ex.Message);
         }
     }
@@ -130,11 +130,11 @@ public sealed class JobProcessor
             var state = await _spooler.GetJobStateAsync(route.LocalQueue, job.SpoolRef!, cancellationToken);
             if (state.Kind == SpoolJobStateKind.Gone)
             {
-                var done = Change(job, JobStates.Done); _store.Update(done); await StatusAsync(done, "done", "spooled", done.SpoolRef);
+                var done = Change(job, JobStates.Done); await StatusAsync(done, "done", "spooled", done.SpoolRef);
             }
             else if (state.Kind == SpoolJobStateKind.Deleted)
             {
-                var failed = Change(job, JobStates.Failed, error: "Druckauftrag wurde abgebrochen."); _store.Update(failed); await StatusAsync(failed, "failed", "spooled", failed.SpoolRef, failed.Error);
+                var uncertain = Change(job, JobStates.Uncertain, error: "Spoolerauftrag abgebrochen; moegliche Seitenausgabe pruefen."); await StatusAsync(uncertain, "uncertain", "spooled", uncertain.SpoolRef, uncertain.Error);
             }
             else if (state.Kind == SpoolJobStateKind.Error)
                 await StatusAsync(job, "printing", "spooled", job.SpoolRef, state.Detail ?? $"Spooler-Fehler (Flags {state.Flags})");
@@ -163,10 +163,10 @@ public sealed class JobProcessor
         else _logger.LogInformation("Abandon für Job {JobId} ab Übergabephase wird ignoriert.", jobId);
     }
 
-    private async Task StatusAsync(StoredJob job, string status, string phase, string? spoolRef = null, string? error = null)
+    private async Task StatusAsync(StoredJob job, string status, string phase, string? spoolRef = null, string? error = null, bool notSubmitted = false)
     {
-        var message = new JobStatusMessage(job.JobId, job.LeaseToken, status, phase, spoolRef, error);
-        _store.AddOutbox("job_status", JsonSerializer.Serialize(message, ProtocolJson.Options), _clock.UtcNow);
+        var message = new JobStatusMessage(job.JobId, job.LeaseToken, status, phase, spoolRef, error, notSubmitted);
+        if (!_store.UpdateWithOutbox(job, "job_status", JsonSerializer.Serialize(message, ProtocolJson.Options), _clock.UtcNow)) return;
         await _cloud.EnqueueStatusAsync(message);
     }
     private async Task CancelSpooledAsync(StoredJob job, CancellationToken cancellationToken)
@@ -174,7 +174,6 @@ public sealed class JobProcessor
         var route = JsonSerializer.Deserialize<RouteConfig>(job.RouteJson, ProtocolJson.Options)!;
         await _spooler.CancelJobAsync(route.LocalQueue, job.SpoolRef!, cancellationToken);
         var canceled = Change(job, JobStates.Abandoned) with { CancelRequested = false };
-        _store.Update(canceled);
         await StatusAsync(canceled, "canceled", "spooled", job.SpoolRef);
     }
     private StoredJob Change(StoredJob job, string state, string? pdfPath = null, string? spoolRef = null, string? error = null) =>
