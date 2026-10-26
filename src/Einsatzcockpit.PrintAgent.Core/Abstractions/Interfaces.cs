@@ -36,12 +36,13 @@ public interface IPrintSubmitter
     Task<SubmitResult> SubmitAsync(PrintRequest request, CancellationToken cancellationToken);
 }
 
-public enum SpoolJobStateKind { InQueue, Printing, Error, Gone, Deleted }
+public enum SpoolJobStateKind { InQueue, Printing, Error, Gone, Deleted, Deleting }
 public sealed record SpoolJobState(SpoolJobStateKind Kind, string? Detail = null, int Flags = 0)
 {
     public static SpoolJobState InQueue { get; } = new(SpoolJobStateKind.InQueue);
     public static SpoolJobState Printing { get; } = new(SpoolJobStateKind.Printing);
     public static SpoolJobState Gone { get; } = new(SpoolJobStateKind.Gone);
+    public static SpoolJobState Deleting { get; } = new(SpoolJobStateKind.Deleting);
     public static SpoolJobState Deleted { get; } = new(SpoolJobStateKind.Deleted);
     public static SpoolJobState Error(int flags, string? detail) => new(SpoolJobStateKind.Error, detail, flags);
 }

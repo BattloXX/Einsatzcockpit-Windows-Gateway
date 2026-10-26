@@ -12,6 +12,7 @@ committet. Schlägt die Outbox-Anlage fehl, wird auch die Statusänderung zurüc
 Ein alter Besitzer oder ein verspäteter nichtterminaler Zustand kann keinen bereits
 abgeschlossenen lokalen Auftrag überschreiben. Die Outbox wird bis zum Cloud-ACK
 wiederholt. Die bestehende PDF-Bereinigung erhält nun die Job-ID als Dedup-Tombstone.
+P3.7: Nach sieben Tagen werden Nutzdaten bereinigt, nach 90 Tagen terminale Jobs gelöscht; unbestätigte Outbox-Meldungen bleiben bis zum Cloud-ACK erhalten.
 
 Nach möglicher Ausgabe gibt es keinen automatischen Ersatzdruck: Ein gelöschter
 Spoolerjob, ein Fehler-Exitcode eines bereits gestarteten Druckkommandos, eine
@@ -29,6 +30,7 @@ und betrachtet unbekannte Referenzen nicht als erfolgreichen Druck. Maßgeblich 
 [Microsofts Fehlervertrag von EnumJobs](https://learn.microsoft.com/en-us/windows/win32/printdocs/enumjobs).
 `done` beschreibt den beobachteten Spoolerabschluss; eine tatsächlich vorgefundene
 Papierausgabe benötigt weiterhin die Geräteabnahme.
+P3.8: Beobachtetes Löschen im Spooler wird am Job persistiert, sodass sein späteres Verschwinden auch nach einem Agent-Neustart `uncertain` ergibt.
 
 88 .NET-Tests bestehen, einschließlich erzwungenem Outbox-Fehler mit vollständigem
 Rollback und Tests für unklare Kommando-/IPP-Ergebnisse. Ein HTML-Browsertest wird

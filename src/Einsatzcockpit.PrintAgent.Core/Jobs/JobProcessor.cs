@@ -128,11 +128,15 @@ public sealed class JobProcessor
         {
             var route = JsonSerializer.Deserialize<RouteConfig>(job.RouteJson, ProtocolJson.Options)!;
             var state = await _spooler.GetJobStateAsync(route.LocalQueue, job.SpoolRef!, cancellationToken);
-            if (state.Kind == SpoolJobStateKind.Gone)
+            if (state.Kind == SpoolJobStateKind.Deleting)
+            {
+                if (!job.SpoolDeleting) _store.Update(job with { SpoolDeleting = true, UpdatedAt = _clock.UtcNow });
+            }
+            else if (state.Kind == SpoolJobStateKind.Gone && !job.SpoolDeleting)
             {
                 var done = Change(job, JobStates.Done); await StatusAsync(done, "done", "spooled", done.SpoolRef);
             }
-            else if (state.Kind == SpoolJobStateKind.Deleted)
+            else if (state.Kind == SpoolJobStateKind.Deleted || (state.Kind == SpoolJobStateKind.Gone && job.SpoolDeleting))
             {
                 var uncertain = Change(job, JobStates.Uncertain, error: "Spoolerauftrag abgebrochen; moegliche Seitenausgabe pruefen."); await StatusAsync(uncertain, "uncertain", "spooled", uncertain.SpoolRef, uncertain.Error);
             }
