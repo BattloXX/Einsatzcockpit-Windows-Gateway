@@ -1,4 +1,4 @@
-## Windows-Druckagent: Druckfehler und Statusklarheit (unveröffentlicht)
+## Windows-Druckagent 2026.10.27: Druckfehler und Statusklarheit
 
 - Fehler vor der Druckübergabe melden ausdrücklich `not_submitted`; die Cloud kann sicher einen Ersatzdruck auslösen.
 - Identische Spoolerzustände erzeugen keine wiederholten Statusmeldungen. Änderungen und behobene Fehler werden weiterhin gemeldet.
