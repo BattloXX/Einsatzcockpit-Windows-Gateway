@@ -17,6 +17,7 @@ public sealed class JobProcessor
     private readonly ILogger<JobProcessor> _logger;
     private readonly SemaphoreSlim _grants = new(2, 2);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _routes = new();
+    private readonly ConcurrentDictionary<string, SpoolJobState> _monitorStates = new();
 
     public JobProcessor(JobStore store, ICloudChannel cloud, IArtifactFetcher fetcher, IPrintSubmitter submitter, IPrintSpooler spooler, IClock clock, ILogger<JobProcessor>? logger = null)
     {
@@ -118,7 +119,7 @@ public sealed class JobProcessor
             if (current.LeaseToken != grant.LeaseToken) return;
             _logger.LogWarning(ex, "Abruf für Druckjob {JobId} ist fehlgeschlagen.", grant.JobId);
             current = Change(current, JobStates.Failed, error: ex.Message);
-            await StatusAsync(current, "failed", "fetching", error: ex.Message);
+            await StatusAsync(current, "failed", "fetching", error: ex.Message, notSubmitted: true);
         }
     }
 
@@ -128,6 +129,7 @@ public sealed class JobProcessor
         {
             var route = JsonSerializer.Deserialize<RouteConfig>(job.RouteJson, ProtocolJson.Options)!;
             var state = await _spooler.GetJobStateAsync(route.LocalQueue, job.SpoolRef!, cancellationToken);
+            if (_monitorStates.TryGetValue(job.JobId, out var previous) && previous == state) continue;
             if (state.Kind == SpoolJobStateKind.Deleting)
             {
                 if (!job.SpoolDeleting) _store.Update(job with { SpoolDeleting = true, UpdatedAt = _clock.UtcNow });
@@ -141,7 +143,12 @@ public sealed class JobProcessor
                 var uncertain = Change(job, JobStates.Uncertain, error: "Spoolerauftrag abgebrochen; moegliche Seitenausgabe pruefen."); await StatusAsync(uncertain, "uncertain", "spooled", uncertain.SpoolRef, uncertain.Error);
             }
             else if (state.Kind == SpoolJobStateKind.Error)
-                await StatusAsync(job, "printing", "spooled", job.SpoolRef, state.Detail ?? $"Spooler-Fehler (Flags {state.Flags})");
+                await StatusAsync(Change(job, JobStates.Spooled, error: state.Detail ?? $"Spooler-Fehler (Flags {state.Flags})"), "printing", "spooled", job.SpoolRef, state.Detail ?? $"Spooler-Fehler (Flags {state.Flags})");
+            else if (previous?.Kind == SpoolJobStateKind.Error || job.Error is not null)
+                await StatusAsync(Change(job, JobStates.Spooled), "printing", "spooled", job.SpoolRef);
+            // Erst nach erfolgreicher Speicherung merken; fehlgeschlagene Meldungen erneut versuchen.
+            if (_store.Get(job.JobId)?.State == JobStates.Spooled) _monitorStates[job.JobId] = state;
+            else _monitorStates.TryRemove(job.JobId, out _);
         }
     }
 
