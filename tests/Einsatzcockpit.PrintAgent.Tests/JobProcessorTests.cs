@@ -247,6 +247,82 @@ public sealed class JobProcessorTests : IDisposable
         Assert.True(new JobStore(_path).Get("j1")!.SpoolDeleting);
     }
 
+    [Fact]
+    public async Task RejectionReportsNotSubmittedAndPersistsProtocolFlag()
+    {
+        var cloud = new FakeCloud();
+        await Create(cloud, submitter: new FakeSubmitter { BeforeSubmit = () => throw new PrintRejectedException("Queue fehlt") })
+            .HandleGrantAsync(Grant("123"));
+        var status = Assert.Single(cloud.Statuses);
+        Assert.Equal("failed", status.Status);
+        Assert.Equal("submitting", status.Phase);
+        Assert.True(status.NotSubmitted);
+        var payload = JsonDocument.Parse(Assert.Single(new JobStore(_path).PendingOutbox()).PayloadJson);
+        Assert.True(payload.RootElement.GetProperty("not_submitted").GetBoolean());
+    }
+
+    [Fact]
+    public async Task FetchFailureReportsNotSubmittedButInterruptedSubmissionDoesNot()
+    {
+        var cloud = new FakeCloud();
+        await Create(cloud, fetcher: new FakeFetcher { Error = new IOException("Download") }).HandleGrantAsync(Grant("123"));
+        Assert.True(Assert.Single(cloud.Statuses).NotSubmitted);
+        cloud.Statuses.Clear();
+        await Create(cloud, submitter: new FakeSubmitter { BeforeSubmit = () => throw new IOException("Verbindung unterbrochen") })
+            .HandleGrantAsync(Grant("456"));
+        var uncertain = Assert.Single(cloud.Statuses);
+        Assert.Equal("uncertain", uncertain.Status);
+        Assert.False(uncertain.NotSubmitted);
+    }
+
+    [Fact]
+    public async Task MonitorDeduplicatesErrorsAndReportsRecoveryAndRecurringError()
+    {
+        var store = new JobStore(_path);
+        store.Insert(Job(JobStates.Spooled) with { SpoolRef = "7" });
+        var cloud = new FakeCloud();
+        var spooler = new FakeSpooler { State = SpoolJobState.Error(3, "Papier leer") };
+        var processor = Create(cloud, store, spooler: spooler);
+        await processor.MonitorAsync();
+        await processor.MonitorAsync();
+        Assert.Single(cloud.Statuses);
+        Assert.Single(store.PendingOutbox());
+        spooler.State = SpoolJobState.Error(4, "Papierstau");
+        await processor.MonitorAsync();
+        Assert.Equal(2, cloud.Statuses.Count);
+        spooler.State = SpoolJobState.Printing;
+        await processor.MonitorAsync();
+        await processor.MonitorAsync();
+        Assert.Null(cloud.Statuses.Last().Error);
+        Assert.Null(store.Get("j1")!.Error);
+        Assert.Equal(3, cloud.Statuses.Count);
+        spooler.State = SpoolJobState.Error(3, "Papier leer");
+        await processor.MonitorAsync();
+        Assert.Equal(4, cloud.Statuses.Count);
+        spooler.State = SpoolJobState.Gone;
+        await processor.MonitorAsync();
+        await processor.MonitorAsync();
+        Assert.Equal("done", cloud.Statuses.Last().Status);
+        Assert.Equal(5, store.PendingOutbox().Count);
+    }
+
+    [Theory]
+    [InlineData(SpoolJobStateKind.Gone)]
+    [InlineData(SpoolJobStateKind.Deleted)]
+    public async Task RecoveryDoesNotTreatMissingSpoolJobAsPrinted(SpoolJobStateKind kind)
+    {
+        var store = new JobStore(_path);
+        store.Insert(Job(JobStates.Spooled) with { SpoolRef = "7" });
+        var spooler = new FakeSpooler { State = new(kind) };
+        await new RecoveryService(store, spooler, new FakeClock()).RecoverAsync();
+        await Create(new FakeCloud(), store, spooler: spooler).MonitorAsync();
+        Assert.Equal(JobStates.Uncertain, store.Get("j1")!.State);
+        var status = JsonSerializer.Deserialize<JobStatusMessage>(Assert.Single(store.PendingOutbox()).PayloadJson, ProtocolJson.Options)!;
+        Assert.Equal("uncertain", status.Status);
+        Assert.Equal("7", status.SpoolRef);
+        Assert.False(status.NotSubmitted);
+    }
+
     private JobProcessor Create(FakeCloud cloud, JobStore? store = null, FakeFetcher? fetcher = null, FakeSubmitter? submitter = null, FakeSpooler? spooler = null) =>
         new(store ?? new JobStore(_path), cloud, fetcher ?? new FakeFetcher(), submitter ?? new FakeSubmitter(), spooler ?? new FakeSpooler(), new FakeClock());
     private static LeaseGrant Grant(string id, string token = "t", int generation = 1) => new(id, token, generation, 60, "alarm", "https://example.test/a.pdf", "pdf", new(), new(1, 2, "Q", "driver"));

@@ -1,3 +1,9 @@
+## Windows-Druckagent: Druckfehler und Statusklarheit (unveröffentlicht)
+
+- Fehler vor der Druckübergabe melden ausdrücklich `not_submitted`; die Cloud kann sicher einen Ersatzdruck auslösen.
+- Identische Spoolerzustände erzeugen keine wiederholten Statusmeldungen. Änderungen und behobene Fehler werden weiterhin gemeldet.
+- Nach einem Neustart gelten verschwundene Spooleraufträge als unklar statt automatisch als gedruckt; bitte am Drucker prüfen.
+
 ## Windows-Druckagent 2026.10.26: sichere Statusmeldungen und Aufräumen
 
 - Statuswechsel und zugehörige Cloud-Meldung werden atomar in der lokalen Outbox gespeichert; ein Absturz dazwischen kann keine Meldung mehr verlieren.
